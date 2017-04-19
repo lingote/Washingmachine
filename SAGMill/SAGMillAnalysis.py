@@ -68,6 +68,7 @@ def dotenminuteforecast(sag, target='PowerDrawMW'):
     fits = []
     for i in xrange(1,11):
         fits.append(createforecast(sag, targetvar = target, stepsahead = i))
+        fits[-1].minute = i
     valpred = pd.concat([pd.DataFrame(i.predict(sag.valid), index = sag.valid.index) for i in fits], axis=1)
     valpred.columns = ['{}min'.format(i) for i in range(1,11)]
     return fits, valpred
@@ -76,13 +77,31 @@ def dotenminuteforecast(sag, target='PowerDrawMW'):
 def doallpredict(sag):
     """
     Run all minute-wise predictions on all performance variables
-    :param sag:
+    :param sag: input SAG object
     :return: dictionary with forecast values for all performance variables
     """
     results = {}
     for i in sag.perfvars:
         results[i] = dotenminuteforecast(sag, i)
     return results
+
+
+def getrsquared(sag, results):
+    """
+    Get R^2 for all performance variable prediction for every 
+    1-10 minute forecast.
+    :param sag: input SAG object
+    :param results: dict with perf variable as key, value is tuple of 
+                    fit results and prediction values
+    :return: dictionary with forecast values for all performance variables
+    """
+    # create data frame with minutes as column and perf variable as index
+    r2df = pd.DataFrame(index=sag.perfvars)
+    for i in sag.perfvars:
+        r2 = []
+        for j in results[i][0]:
+            r2.append(j.score(sag.valid.loc[sag.valid.index[0]:sag.valid.index[-11],:], yfut))
+        r2df[i] = r2
 
 
 def getprederror(sag, pred, target='PowerDrawMW'):
