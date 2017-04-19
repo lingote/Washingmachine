@@ -1,7 +1,9 @@
 import SAGMill.SAGMillAnalysis
 import pandas as pd
 pd.set_option('display.width',1000)
+
 sag = SAGMill.SAGMillAnalysis.SAGMillAnalyzer()
+SAGMill.SAGMillAnalysis.normalize(sag)
 results = SAGMill.SAGMillAnalysis.doallpredict(sag, mode='valid')
 trainresults = SAGMill.SAGMillAnalysis.doallpredict(sag, mode='train')
 
