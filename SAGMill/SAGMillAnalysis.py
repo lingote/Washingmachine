@@ -53,7 +53,7 @@ class SAGMillAnalyzer():
         #self.perfvars = ['Power Draw (MW)', 'Motor Torque (%)', 'Bearing Pressure A (kPa)',
         #            'Bearing Pressure B (kPa)', 'Bearing Pressure C (kPa)',
         #            'Bearing Pressure D (kPa)', 'SCATS Conveyor Belt Feed Rate (t/h)']
-        self.perfvars = ['PressA', 'PressB', 'PressC', 'PressD', 'ConvBeltFines',
+        self.perfvars = ['PressA', 'PressB', 'PressC', 'PressD',
                          'Torque', 'PowerDrawMW', 'SCATSConvBelt']
 
 
@@ -162,6 +162,7 @@ def calcprederrormin(sag, pred, mode='valid', offset=1, target='PowerDrawMW'):
     if mode not in ['test', 'train', 'valid']:
         print 'mode {} is not valid'.format(mode)
         return
+    dfdata = sag.dfdata[mode]
     pidx1 = pred.index[0]
     pidx2 = pred.index[-(1+offset)]
     vidx1 = dfdata.index[offset]
@@ -200,9 +201,8 @@ def plotprederr(preddict):
     :param preddict: dict with perf vars = key, val = pred error
     :return: saves histograms as pngs
     """
-    for k, v in preddict.iteritems():
-        #fig, ax = plt.subplots()
-        for k2, v2 in preddict[k].iteritems():
+    for k in preddict.iterkeys():
+        for k2, v2 in preddict[k][1].iteritems():
             plt.hist(v2, 100)
             plt.title('{} {} pred error'.format(k, k2))
             plt.yscale('log', nonposy='clip')
@@ -260,7 +260,7 @@ def normalize(sag, inverse=False):
     sag.dfdata['valid'].index = validindex
 
 
-def dohistograms(df, dfcol, pp):
+def dohistograms(df, dfcol):
     """
     Create simple histograms for exploratory analysis
     """
@@ -283,10 +283,12 @@ def dohistograms(df, dfcol, pp):
     plt.text(0.2, 0.8, 'std={}'.format(dfstd), fontsize=15,
              transform=ax.transAxes)
     plt.savefig('hist{}.png'.format(dfcol.upper()))
-    pp.savefig()
 
 
-def dotimeseries(df, dfcol, pp=None):
+def dotimeseries(df, dfcol):
+    """
+    Plot time series of variables
+    """
     plt.close('all')
     ts = df[dfcol]
     plt.xlabel('time')
@@ -294,29 +296,20 @@ def dotimeseries(df, dfcol, pp=None):
     plt.title('TimeSeries of {}'.format(dfcol))
     plt.plot(ts)
     plt.savefig('timeseries{}.png'.format(dfcol.upper()))
-    pp.savefig()
 
 
-def savehists(sag, histfile=None, tsfile=None):
+def savehists(sag):
     """
-    Save histograms to PDF file
+    Create and save histograms and graphs of training data
     :return:
     """
-    if histfile is None and tsfile is None:
-        print "enter at either hist or ts output filename"
-        return
+    for i in sag.dfdata['train'].columns.values:
+        dohistograms(sag.dfdata['train'], i)
 
-    if histfile is not None:
-        with PdfPages(histfile) as pp:
-            for i in sag.dfdata['train'].columns.values:
-                dohistograms(sag.dfdata['train'], i, pp)
-
-    if tsfile is not None:
-        with PdfPages(tsfile) as pp:
-            for i in sag.dfdata['train'].columns.values:
-                plt.close()
-                dotimeseries(sag.dfdata['train'], i, pp)
-        plt.close('all')
+    for i in sag.dfdata['train'].columns.values:
+        #plt.close()
+        dotimeseries(sag.dfdata['train'], i)
+        #plt.close('all')
 
 
 def doautocorrplot(sag, predictor, outname='ACFPlots.pdf'):
