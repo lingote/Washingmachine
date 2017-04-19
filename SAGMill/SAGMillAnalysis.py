@@ -14,138 +14,182 @@ from sklearn.preprocessing import MinMaxScaler
 import statsmodels.formula.api as sm
 from sklearn import linear_model
 from sklearn.model_selection import cross_val_predict
+import random
+
+random.seed(9999)
 
 
 class SAGMillAnalyzer():
     """
     Main class for our analysis
     """
-    def __init__(self, indata = '/run/media/ignacio/data/intellisense/sag/SAG_data.csv'):
+    def __init__(self, indata='/run/media/ignacio/data/intellisense/sag/SAG_data.csv'):
         self._indata = indata
         #self.df['Time'] = self.df['Time'].apply(lambda x: pd.to_datetime(x))
         dateparse = lambda dates: pd.datetime.strptime(dates, '%d/%m/%Y %H:%M')
         #self.df = pd.read_csv(indata, usecols=range(1,15))
         self.df = pd.read_csv(indata, parse_dates=['Time'], index_col='Time', date_parser=dateparse)
-        self.df.drop('Unnamed: 0',axis=1, inplace = True)
+        self.df.drop('Unnamed: 0', axis=1, inplace=True)
         self.df = self.df.dropna()
         # rename columns, use shorter names, w/o spaces
         self.orignames = self.df.columns
-        newcols=['PressA', 'PressB', 'PressC', 'PressD', 'ConvBeltPSD', 'ConvBeltFines', 
-                 'ConvFeedRate', 'DilutionFlow', 'Torque', 'PowerDrawMW', 'SCATSConvBelt',
-                 'Speed', 'Anomaly']
+        newcols = ['PressA', 'PressB', 'PressC', 'PressD', 'ConvBeltPSD', 'ConvBeltFines',
+                   'ConvFeedRate', 'DilutionFlow', 'Torque', 'PowerDrawMW', 'SCATSConvBelt',
+                   'Speed', 'Anomaly']
         self.df.columns = newcols
-        self.test = self.df['2016-04-01':self.df.index[-1]] 
-        self.train = self.df.drop(self.test.index)
+        self.dfdata = {}
+        self.dfdata['test'] = self.df['2016-04-01':self.df.index[-1]]
+        self.dfdata['train'] = self.df.drop(self.dfdata['test'].index)
         # take 2/3 for training, 1/3 for validation
-        ntrain = self.train.shape[0]/3
-        self.valid = self.train.loc[self.train.index[2*ntrain:]]
-        self.train = self.train.loc[self.train.index[:2*ntrain]]
+        ntrain = self.dfdata['train'].shape[0]/3
+        self.dfdata['valid'] = self.dfdata['train'].loc[self.dfdata['train'].index[2*ntrain:]]
+        self.dfdata['train'] = self.dfdata['train'].loc[self.dfdata['train'].index[:2*ntrain]]
         # define a scaler object
         self.scaler = MinMaxScaler(feature_range=(0, 1))
-        self.scaler = self.scaler.fit(self.train)
+        self.scaler = self.scaler.fit(self.dfdata['train'])
         self.controlvars = ['Speed (RPM)', 'Conveyor Belt Feed Rate (t/h)',
-                      'Dilution Flow Rate (m3/h)']
+                            'Dilution Flow Rate (m3/h)']
         self.feedvars = ['Conveyor Belt PSD +4 (%)', 'Conveyor Belt PSD Fines (%)']
         #self.perfvars = ['Power Draw (MW)', 'Motor Torque (%)', 'Bearing Pressure A (kPa)',
         #            'Bearing Pressure B (kPa)', 'Bearing Pressure C (kPa)',
         #            'Bearing Pressure D (kPa)', 'SCATS Conveyor Belt Feed Rate (t/h)']
         self.perfvars = ['PressA', 'PressB', 'PressC', 'PressD', 'ConvBeltFines',
-                    'Torque', 'PowerDrawMW', 'SCATSConvBelt']
+                         'Torque', 'PowerDrawMW', 'SCATSConvBelt']
+
+
+def gettraindata(sag, mode='train', targetvar='PowerDrawMW', offset=10):
+    """
+    Build dataset with target value <offset> minutes ahead
+    """
+    if mode not in ['test', 'train', 'valid']:
+        print 'mode {} is not valid'.format(mode)
+        return
+    yfut = (pd.Series(sag.dfdata[mode].loc[sag.dfdata[mode].index[offset:],
+                                           targetvar].values,
+                      index=sag.dfdata[mode]
+                      .index[:-offset]))
+    yfut.name = '{}Pred'.format(targetvar)
+    return (pd.concat([sag.dfdata[mode].loc[:sag.dfdata[mode].index[-offset-1],
+                                            :], yfut], copy=False, axis=1))
 
 
 def createforecast(sag, targetvar='PowerDrawMW', stepsahead=10):
     """
-    Create dataset with targetvar 'stepsahead' of X
+    Create forecast for targetvar with 'stepsahead' of X
     """
     lr = linear_model.LinearRegression()
-    yfut= pd.Series(sag.train.loc[sag.train.index[stepsahead:],targetvar].values, index=sag.train.index[:-stepsahead])
-    yfut.name = '{}Pred'.format(targetvar)
-    linregfit = lr.fit(sag.train.loc[:sag.train.index[-stepsahead-1],:], yfut)
+    targetname = '{}Pred'.format(targetvar)
+    traindata = gettraindata(sag, mode='train', targetvar=targetvar, offset=stepsahead)
+    #linregfit = lr.fit(sag.train.loc[:sag.train.index[-stepsahead-1],:], yfut)
+    linregfit = lr.fit(traindata.drop(targetname, axis=1), traindata[targetname])
     return linregfit
 
 
-def dotenminuteforecast(sag, target='PowerDrawMW'):
+def dotenminuteforecast(sag, target='PowerDrawMW', mode='valid'):
+    """
+    Create 1-10min forecast for target variable
+    :param sag: input SAG object
+    :param target: target var
+    :param mode: either 'valid', 'train' or 'test'
+    :return: array with LinearRegression objects (fits) and predicted values
+    """
+    if mode not in ['test', 'train', 'valid']:
+        print 'mode {} is not valid'.format(mode)
+        return
     fits = []
-    for i in xrange(1,11):
-        fits.append(createforecast(sag, targetvar = target, stepsahead = i))
+    for i in xrange(1, 11):
+        fits.append(createforecast(sag, targetvar=target, stepsahead=i))
         fits[-1].minute = i
-    valpred = pd.concat([pd.DataFrame(i.predict(sag.valid), index = sag.valid.index) for i in fits], axis=1)
-    valpred.columns = ['{}min'.format(i) for i in range(1,11)]
+    valpred = (pd.concat([pd.DataFrame(i.predict(sag.dfdata[mode]),
+                                       index=sag.dfdata[mode].index)
+                          for i in fits], axis=1, copy=False))
+    valpred.columns = ['{}min'.format(i) for i in range(1, 11)]
     return fits, valpred
 
 
-def doallpredict(sag):
+def doallpredict(sag, mode='valid'):
     """
     Run all minute-wise predictions on all performance variables
     :param sag: input SAG object
     :return: dictionary with forecast values for all performance variables
     """
+    if mode not in ['test', 'train', 'valid']:
+        print 'mode {} is not valid'.format(mode)
+        return
     results = {}
     for i in sag.perfvars:
-        results[i] = dotenminuteforecast(sag, i)
+        results[i] = dotenminuteforecast(sag, i, mode)
     return results
 
 
-def getrsquared(sag, results):
+def rsquared(sag, results, mode='train'):
     """
-    Get R^2 for all performance variable prediction for every 
+    Get R^2 for all performance variable prediction for every
     1-10 minute forecast.
     :param sag: input SAG object
-    :param results: dict with perf variable as key, value is tuple of 
+    :param results: dict with perf variable as key, value is tuple of
                     fit results and prediction values
     :return: dictionary with forecast values for all performance variables
     """
-    # create data frame with minutes as column and perf variable as index
+    if mode not in ['test', 'train', 'valid']:
+        print 'mode {} is not valid'.format(mode)
+        return
     r2df = pd.DataFrame(index=sag.perfvars)
+    r2adjusteddf = pd.DataFrame(index=sag.perfvars)
     for i in sag.perfvars:
         r2 = []
-        for j in results[i][0]:
-            r2.append(j.score(sag.valid.loc[sag.valid.index[0]:sag.valid.index[-11],:], yfut))
-        r2df[i] = r2
+        for j in results[i][1]:
+            offset = int(j.strip('min'))
+            yhat = results[i][1][j]
+            yhat = yhat.loc[yhat.index[:-offset]]
+            y = sag.dfdata[mode].loc[sag.dfdata[mode].index[offset:], i]
+            sse = sum((y.values - yhat.values)**2)
+            sstotal = sum((y - np.mean(y))**2)
+            r_squared = 1 - (float(sse))/sstotal
+            nregressor = sag.dfdata[mode].shape[1]
+            adjusted_r_squared = (r_squared - (1 - r_squared)*nregressor
+                                  /(len(y.values) - nregressor - 1))
+            r2df.loc[i, j] = r_squared
+            r2adjusteddf.loc[i, j] = adjusted_r_squared
+    return r2df, r2adjusteddf
 
 
-def getprederror(sag, pred, target='PowerDrawMW'):
-    """
-    Calculate prediction error. Compute difference between prediction
-    and validation data.
-    """
-    diffpred = []
-    for i in range(pred.index.shape[0]-10):
-        tenMinPred = pred.loc[pred.index[i]]
-        validvals = sag.valid.loc[sag.valid.index[i+1:i+11],target]
-        diffpred.append(tenMinPred.values - validvals.values)
-    return diffpred
-
-
-def calcprederrormin(sag, pred, offset=1, target='PowerDrawMW'):
+def calcprederrormin(sag, pred, mode='valid', offset=1, target='PowerDrawMW'):
     """
     Compute difference between validation
     data and prediction at <offset> minutes.
     """
+    if mode not in ['test', 'train', 'valid']:
+        print 'mode {} is not valid'.format(mode)
+        return
     pidx1 = pred.index[0]
     pidx2 = pred.index[-(1+offset)]
-    vidx1 = sag.valid.index[offset]
-    vidx2 = sag.valid.index[-1]
+    vidx1 = dfdata.index[offset]
+    vidx2 = dfdata.index[-1]
     # Create col name
     offsetcol = '{}min'.format(offset)
-    diffpred = sag.valid.loc[vidx1:vidx2, target].values - pred.loc[pidx1:pidx2, offsetcol].values
+    diffpred = (sag.dfdata[mode].loc[vidx1:vidx2, target].values
+                - pred.loc[pidx1:pidx2, offsetcol].values)
     return diffpred
 
 
-def calcallerrors(sag, preddict):
+def calcallerrors(sag, preddict, mode='valid'):
     """
     Calculate errors for 1...10 min predictions
     wrt validation sample
     :param sag: sag object
     :param preddict: prediction dict. Key per performance variable
     :param target: target variable
+    :param mode: error on train, valid or test
     :return: dictionary with prediction errors with perf vars and minute as keys
     """
     prederr = {}
     for i in sag.perfvars:
         errdf = {}
-        for j in range(1,11):
-            errdf['{}min'.format(j)] = calcprederrormin(sag, preddict[i][1], offset=j, target=i)
+        for j in range(1, 11):
+            errdf['{}min'.format(j)] = (calcprederrormin(sag, preddict[i][1],
+                                                         mode=mode, offset=j,
+                                                         target=i))
         prederr[i] = errdf
     return prederr
 
@@ -179,7 +223,8 @@ def plotpredvsdatamin(sag, pred, offset=1, target='PowerDrawMW'):
     # Create col name
     offsetcol = '{}min'.format(offset)
     fig, ax = plt.subplots()
-    ax.plot(sag.valid.loc[vidx1:vidx2, target].values, pred.loc[pidx1:pidx2, offsetcol].values, 'o')
+    (ax.plot(sag.valid.loc[vidx1:vidx2, target].values,
+             pred.loc[pidx1:pidx2, offsetcol].values, 'o'))
     plt.title("{}: Predicted vs data (validation)".format(target))
     plt.xlabel("Data {}".format(target))
     plt.ylabel("Predicted {}".format(target))
@@ -189,29 +234,30 @@ def plotpredvsdatamin(sag, pred, offset=1, target='PowerDrawMW'):
     ]
 
     ax.plot(lims, lims, 'k-', alpha=0.75, zorder=0)
-    ax.set_xlim([sag.valid.loc[vidx1:vidx2, target].min(),sag.valid.loc[vidx1:vidx2, target].max()])
+    (ax.set_xlim([sag.valid.loc[vidx1:vidx2, target].min(),
+                  sag.valid.loc[vidx1:vidx2, target].max()]))
     plt.show()
 
-    
+
 def normalize(sag, inverse=False):
     """
     Transform dataset using the scaler object attached to the SAG object
     """
-    colnames = sag.train.columns
-    trainindex = sag.train.index
-    validindex = sag.valid.index
-    testindex = sag.test.index
-    if inverse:
-        sag.train = pd.DataFrame(sag.scaler.inverse_transform(sag.train),columns = colnames)
-        sag.valid = pd.DataFrame(sag.scaler.inverse_transform(sag.valid), columns = colnames)
-        sag.test = pd.DataFrame(sag.scaler.inverse_transform(sag.test), columns = colnames)
-    else:
-        sag.train = pd.DataFrame(sag.scaler.transform(sag.train), columns = colnames)
-        sag.valid = pd.DataFrame(sag.scaler.transform(sag.valid), columns = colnames)
-        sag.test = pd.DataFrame(sag.scaler.transform(sag.test), columns = colnames)
-    sag.train.index = trainindex
-    sag.test.index = testindex
-    sag.valid.index = validindex
+    colnames = sag.dfdata['train'].columns
+    trainindex = sag.dfdata['train'].index
+    validindex = sag.dfdata['valid'].index
+    testindex = sag.dfdata['test'].index
+    for i in sag.dfdata.iterkeys():
+        if inverse:
+            sag.dfdata[i] = (pd.DataFrame(sag.scaler
+                                          .inverse_transform(sag.dfdata[i])
+                                          , columns=colnames))
+        else:
+            sag.dfdata[i] = (pd.DataFrame(sag.scaler.transform(sag.dfdata[i])
+                                          , columns=colnames))
+    sag.dfdata['train'].index = trainindex
+    sag.dfdata['test'].index = testindex
+    sag.dfdata['valid'].index = validindex
 
 
 def dohistograms(df, dfcol, pp):
@@ -257,19 +303,19 @@ def savehists(sag, histfile=None, tsfile=None):
     :return:
     """
     if histfile is None and tsfile is None:
-        print("enter at either hist or ts output filename")
+        print "enter at either hist or ts output filename"
         return
 
     if histfile is not None:
         with PdfPages(histfile) as pp:
-            for i in sag.train.columns.values:
-                dohistograms(sag.train, i, pp)
+            for i in sag.dfdata['train'].columns.values:
+                dohistograms(sag.dfdata['train'], i, pp)
 
     if tsfile is not None:
         with PdfPages(tsfile) as pp:
-            for i in sag.train.columns.values:
+            for i in sag.dfdata['train'].columns.values:
                 plt.close()
-                dotimeseries(sag.train, i, pp)
+                dotimeseries(sag.dfdata['train'], i, pp)
         plt.close('all')
 
 
@@ -282,7 +328,7 @@ def doautocorrplot(sag, predictor, outname='ACFPlots.pdf'):
     """
     with PdfPages(outname) as pp:
         for i in sag.perfvars + sag.controlvars + sag.feedvars:
-            plot_acf(sag.df[i], lags = 10000)
+            plot_acf(sag.dfdata['train'][i], lags=10000)
             plt.title('ACF {}'.format(i))
             pp.savefig()
             plt.close('all')
@@ -297,9 +343,9 @@ def test_stationarity(timeseries):
     rolmean = roller.mean()
     rolstd = roller.std()
     #Plot rolling statistics:
-    orig = plt.plot(timeseries, color='blue',label='Original')
+    orig = plt.plot(timeseries, color='blue', label='Original')
     mean = plt.plot(rolmean, color='red', label='Rolling Mean')
-    std = plt.plot(rolstd, color='black', label = 'Rolling Std')
+    std = plt.plot(rolstd, color='black', label='Rolling Std')
     plt.legend(loc='best')
     plt.title('Rolling Mean & Standard Deviation')
     plt.show(block=False)
@@ -307,8 +353,10 @@ def test_stationarity(timeseries):
     #Perform Dickey-Fuller test:
     print 'Results of Dickey-Fuller Test:'
     dftest = adfuller(timeseries, autolag='AIC')
-    dfoutput = pd.Series(dftest[0:4], index=['Test Statistic','p-value','#Lags Used','Number of Observations Used'])
-    for key,value in dftest[4].items():
+    dfoutput = (pd.Series(dftest[0:4],
+                          index=['Test Statistic', 'p-value',
+                                 '#Lags Used', 'Number of Observations Used']))
+    for key, value in dftest[4].items():
         dfoutput['Critical Value (%s)'%key] = value
     print dfoutput
 
