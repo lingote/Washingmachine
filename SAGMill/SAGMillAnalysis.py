@@ -25,13 +25,13 @@ class SAGMillAnalyzer():
         #self.df['Time'] = self.df['Time'].apply(lambda x: pd.to_datetime(x))
         dateparse = lambda dates: pd.datetime.strptime(dates, '%d/%m/%Y %H:%M')
         #self.df = pd.read_csv(indata, usecols=range(1,15))
-        self.df = pd.read_csv(indata, parse_dates=['Time'], index_col='Time',date_parser=dateparse)
+        self.df = pd.read_csv(indata, parse_dates=['Time'], index_col='Time', date_parser=dateparse)
         self.df.drop('Unnamed: 0',axis=1, inplace = True)
         self.df = self.df.dropna()
         # rename columns, use shorter names, w/o spaces
         self.orignames = self.df.columns
         newcols=['PressA', 'PressB', 'PressC', 'PressD', 'ConvBeltPSD', 'ConvBeltFines', 
-                 'ConvFeedRate', 'DilutionFlow', 'Torque', 'PowerDrawMW', 'SCATSConvBelt', 
+                 'ConvFeedRate', 'DilutionFlow', 'Torque', 'PowerDrawMW', 'SCATSConvBelt',
                  'Speed', 'Anomaly']
         self.df.columns = newcols
         self.test = self.df['2016-04-01':self.df.index[-1]] 
@@ -46,25 +46,14 @@ class SAGMillAnalyzer():
         self.controlvars = ['Speed (RPM)', 'Conveyor Belt Feed Rate (t/h)',
                       'Dilution Flow Rate (m3/h)']
         self.feedvars = ['Conveyor Belt PSD +4 (%)', 'Conveyor Belt PSD Fines (%)']
-        self.perfvars = ['Power Draw (MW)', 'Motor Torque (%)', 'Bearing Pressure A (kPa)',
-                    'Bearing Pressure B (kPa)', 'Bearing Pressure C (kPa)',
-                    'Bearing Pressure D (kPa)', 'SCATS Conveyor Belt Feed Rate (t/h)']
+        #self.perfvars = ['Power Draw (MW)', 'Motor Torque (%)', 'Bearing Pressure A (kPa)',
+        #            'Bearing Pressure B (kPa)', 'Bearing Pressure C (kPa)',
+        #            'Bearing Pressure D (kPa)', 'SCATS Conveyor Belt Feed Rate (t/h)']
+        self.perfvars = ['PressA', 'PressB', 'PressC', 'PressD', 'ConvBeltFines',
+                    'Torque', 'PowerDrawMW', 'SCATSConvBelt']
 
 
-def _createForecast(sag, targetvar = 'PowerDrawMW', stepsahead=10):
-    """
-    Create dataset with targetvar 'stepsahead' of X
-    """
-    yfut= pd.Series(sag.train.loc[sag.train.index[stepsahead:],targetvar].values, index=sag.train.index[:-stepsahead])
-    yfut.name = '{}Pred'.format(targetvar)
-    fitdata = pd.concat([sag.train.loc[:sag.train.index[-stepsahead-1],:], yfut],axis=1, copy=False)
-    formula = ("{}Pred ~ Speed + ConvFeedRate + DilutionFlow + Torque + PressA + "
-               "PressB + PressC + PressD + ConvBeltPSD + ConvBeltFines + "
-               "ConvFeedRate + SCATSConvBelt").format(targetvar)
-    return sm.ols(formula=formula, data = fitdata).fit()
-
-
-def createForecast(sag, targetvar = 'PowerDrawMW', stepsahead=10):
+def createforecast(sag, targetvar='PowerDrawMW', stepsahead=10):
     """
     Create dataset with targetvar 'stepsahead' of X
     """
@@ -75,16 +64,28 @@ def createForecast(sag, targetvar = 'PowerDrawMW', stepsahead=10):
     return linregfit
 
 
-def doTenMinuteForecast(sag, target='PowerDrawMW'):
+def dotenminuteforecast(sag, target='PowerDrawMW'):
     fits = []
     for i in xrange(1,11):
-        fits.append(_createForecast(sag, targetvar = target, stepsahead = i))
+        fits.append(createforecast(sag, targetvar = target, stepsahead = i))
     valpred = pd.concat([pd.DataFrame(i.predict(sag.valid), index = sag.valid.index) for i in fits], axis=1)
     valpred.columns = ['{}min'.format(i) for i in range(1,11)]
     return fits, valpred
 
 
-def getPredError(sag, pred, target = 'PowerDrawMW'):
+def doallpredict(sag):
+    """
+    Run all minute-wise predictions on all performance variables
+    :param sag:
+    :return: dictionary with forecast values for all performance variables
+    """
+    results = {}
+    for i in sag.perfvars:
+        results[i] = dotenminuteforecast(sag, i)
+    return results
+
+
+def getprederror(sag, pred, target='PowerDrawMW'):
     """
     Calculate prediction error. Compute difference between prediction
     and validation data.
@@ -97,9 +98,9 @@ def getPredError(sag, pred, target = 'PowerDrawMW'):
     return diffpred
 
 
-def getPredErrorMin(sag, pred, offset = 1, target = 'PowerDrawMW'):
+def calcprederrormin(sag, pred, offset=1, target='PowerDrawMW'):
     """
-    Calculate prediction error. Compute difference between validation 
+    Compute difference between validation
     data and prediction at <offset> minutes.
     """
     pidx1 = pred.index[0]
@@ -112,7 +113,40 @@ def getPredErrorMin(sag, pred, offset = 1, target = 'PowerDrawMW'):
     return diffpred
 
 
-def plotPredVsDataMin(sag, pred, offset = 1, target = 'PowerDrawMW'):
+def calcallerrors(sag, preddict):
+    """
+    Calculate errors for 1...10 min predictions
+    wrt validation sample
+    :param sag: sag object
+    :param preddict: prediction dict. Key per performance variable
+    :param target: target variable
+    :return: dictionary with prediction errors with perf vars and minute as keys
+    """
+    prederr = {}
+    for i in sag.perfvars:
+        errdf = {}
+        for j in range(1,11):
+            errdf['{}min'.format(j)] = calcprederrormin(sag, preddict[i][1], offset=j, target=i)
+        prederr[i] = errdf
+    return prederr
+
+
+def plotprederr(preddict):
+    """
+    Make histogram of prediction errors
+    :param preddict: dict with perf vars = key, val = pred error
+    :return: saves histograms as pngs
+    """
+    for k, v in preddict.iteritems():
+        #fig, ax = plt.subplots()
+        for k2, v2 in preddict[k].iteritems():
+            plt.hist(v2, 100)
+            plt.title('{} {} pred error'.format(k, k2))
+            plt.yscale('log', nonposy='clip')
+            plt.savefig('{}_{}_pred_error.png'.format(k, k2))
+            plt.close()
+
+def plotpredvsdatamin(sag, pred, offset=1, target='PowerDrawMW'):
     """
     Plot prediction vs validation data
     """
@@ -140,7 +174,7 @@ def plotPredVsDataMin(sag, pred, offset = 1, target = 'PowerDrawMW'):
     plt.show()
 
     
-def normalize(sag, inverse = False):
+def normalize(sag, inverse=False):
     """
     Transform dataset using the scaler object attached to the SAG object
     """
@@ -183,20 +217,22 @@ def dohistograms(df, dfcol, pp):
              transform=ax.transAxes)
     plt.text(0.2, 0.8, 'std={}'.format(dfstd), fontsize=15,
              transform=ax.transAxes)
+    plt.savefig('hist{}.png'.format(dfcol.upper()))
     pp.savefig()
 
 
-def dotimeseries(df, dfcol, pp = None):
+def dotimeseries(df, dfcol, pp=None):
     plt.close('all')
     ts = df[dfcol]
     plt.xlabel('time')
     plt.ylabel(dfcol)
     plt.title('TimeSeries of {}'.format(dfcol))
     plt.plot(ts)
+    plt.savefig('timeseries{}.png'.format(dfcol.upper()))
     pp.savefig()
 
 
-def savehists(sag, histfile = None, tsfile = None):
+def savehists(sag, histfile=None, tsfile=None):
     """
     Save histograms to PDF file
     :return:
@@ -205,16 +241,16 @@ def savehists(sag, histfile = None, tsfile = None):
         print("enter at either hist or ts output filename")
         return
 
-    if tsfile is not None:
+    if histfile is not None:
         with PdfPages(histfile) as pp:
-            for i in sag.perfvars + sag.controlvars + sag.feedvars:
-                h1 = dohistograms(sag.train, i, pp)
+            for i in sag.train.columns.values:
+                dohistograms(sag.train, i, pp)
 
     if tsfile is not None:
         with PdfPages(tsfile) as pp:
-            for i in sag.perfvars + sag.controlvars + sag.feedvars:
+            for i in sag.train.columns.values:
                 plt.close()
-                t1 = dotimeseries(sag.train, i, pp)
+                dotimeseries(sag.train, i, pp)
         plt.close('all')
 
 
