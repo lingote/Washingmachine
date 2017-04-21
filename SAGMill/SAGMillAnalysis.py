@@ -4,20 +4,29 @@ Prototype module for SAG mill analysis
 """
 import pandas as pd
 import numpy as np
+import scipy.stats
+from scipy.stats import binned_statistic
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.pylab import rcParams
 from statsmodels.tsa.stattools import adfuller
 from pandas.tools.plotting import autocorrelation_plot
 from statsmodels.graphics.tsaplots import plot_acf
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import statsmodels.formula.api as sm
 from sklearn import linear_model
 from sklearn.model_selection import cross_val_predict
-import random
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.wrappers.scikit_learn import KerasRegressor
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import KFold
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
 
-random.seed(9999)
 
+seed = 1234
+np.random.seed(seed)
 
 class SAGMillAnalyzer():
     """
@@ -46,6 +55,7 @@ class SAGMillAnalyzer():
         self.dfdata['train'] = self.dfdata['train'].loc[self.dfdata['train'].index[:2*ntrain]]
         # define a scaler object
         self.scaler = MinMaxScaler(feature_range=(0, 1))
+        #self.scaler = StandardScaler()
         self.scaler = self.scaler.fit(self.dfdata['train'])
         self.controlvars = ['Speed (RPM)', 'Conveyor Belt Feed Rate (t/h)',
                             'Dilution Flow Rate (m3/h)']
@@ -174,6 +184,51 @@ def calcprederrormin(sag, pred, mode='valid', offset=1, target='PowerDrawMW'):
     return diffpred
 
 
+def calcresiduals(sag, pred, mode='valid', offset=1, target='PowerDrawMW'):
+    """
+    Compute difference between validation
+    data and prediction at <offset> minutes.
+    :return: Dataframe with observered y, and yerr
+    """
+    if mode not in ['test', 'train', 'valid']:
+        print 'mode {} is not valid'.format(mode)
+        return
+    dfdata = sag.dfdata[mode]
+    pidx1 = pred.index[0]
+    pidx2 = pred.index[-(1+offset)]
+    vidx1 = dfdata.index[offset]
+    vidx2 = dfdata.index[-1]
+    # Create col name
+    print vidx1, vidx2
+    offsetcol = '{}min'.format(offset)
+    print offsetcol
+    diffpred = pd.DataFrame(index=pd.date_range(vidx1, vidx2, freq='min'))
+    diffpred = pd.DataFrame(index=sag.dfdata[mode].index[offset:])
+    diffpred['yobserved'] = sag.dfdata[mode].loc[vidx1:vidx2, target].values
+    diffpred['yerr'] = (sag.dfdata[mode].loc[vidx1:vidx2, target].values
+                             - pred.loc[pidx1:pidx2, offsetcol].values)
+    return diffpred
+
+
+def drawresiduals(sag, pred, mode='valid'):
+    """
+    Draw residuals vs observed value
+    """
+    for i in sag.perfvars:
+        for j in range(1,11):
+            residuals = calcresiduals(sag, pred[i][1], mode=mode, offset=j, target=i)
+            bin_mean, bin_edges, bin_num = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='mean', bins=50)
+            bin_std, bin_stdedges, bin_stdnum = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='std', bins=50)
+            plt.scatter(residuals.ix[:,0], residuals.ix[:,1],zorder=1, s=1, color='gray')
+            plt.hlines(bin_mean+bin_std, bin_edges[:-1], bin_edges[1:], colors='r', lw=2,label='binned statistic of data',zorder=2)
+            plt.hlines(bin_mean-bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=2,label='binned statistic of data',zorder=2)
+            plt.hlines(bin_mean, bin_edges[:-1], bin_edges[1:], colors='r', lw=2,label='binned statistic of data',zorder=2)
+            plt.title('{} {}min residuals'.format(i, j))
+            plt.xlabel('{}'.format(i))
+            plt.savefig('residual{}{}.png'.format(i,j))
+
+
+
 def calcallerrors(sag, preddict, mode='valid'):
     """
     Calculate errors for 1...10 min predictions
@@ -193,6 +248,27 @@ def calcallerrors(sag, preddict, mode='valid'):
                                                          target=i))
         prederr[i] = errdf
     return prederr
+
+
+###def calcresiduals(sag, preddict, mode='valid'):
+###    """
+###    Calculate errors for 1...10 min predictions
+###    wrt validation sample
+###    :param sag: sag object
+###    :param preddict: prediction dict. Key per performance variable
+###    :param target: target variable
+###    :param mode: error on train, valid or test
+###    :return: dictionary with prediction errors with perf vars and minute as keys
+###    """
+###    prederr = {}
+###    for i in sag.perfvars:
+###        errdf = {}
+###        for j in range(1, 11):
+###            errdf['{}min'.format(j)] = (calcprederrormin(sag, preddict[i][1],
+###                                                         mode=mode, offset=j,
+###                                                         target=i))
+###        prederr[i] = errdf
+###    return prederr
 
 
 def plotprederr(preddict):
@@ -353,6 +429,57 @@ def test_stationarity(timeseries):
         dfoutput['Critical Value (%s)'%key] = value
     print dfoutput
 
+
+def baseline_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
+    # create model
+    model = Sequential()
+    #model.add(Dropout(dropout, input_shape=(13,)))
+    model.add(Dense(13, input_dim=13, kernel_initializer=init, activation='relu'))
+    #model.add(Dropout(dropout))
+    model.add(Dense(1, kernel_initializer=init))
+    # Compile model
+    model.compile(loss='mean_squared_error', optimizer=optimizer)
+    return model
+
+
+def evalnn(sag):
+    # evaluate model with standardized dataset
+    tvar = 'PowerDrawMW'
+    traindata = gettraindata(sag, mode='train', targetvar=tvar, offset=5)
+    tvar = '{}Pred'.format(tvar)
+    seed = 1234
+    np.random.seed(seed)
+    estimators = []
+    estimators.append(('standardize', StandardScaler()))
+    #estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, epochs=150, batch_size=10000, verbose=0)))
+    #estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, batch_size=100000, verbose=0)))
+    estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, epochs=150, optimizer='rmsprop', init='normal', batch_size=10000, verbose=0)))
+    print estimators[-1][1].get_params().keys()
+    X = traindata.drop(tvar, axis=1)
+    Y = traindata[tvar]
+    pipeline = Pipeline(estimators)
+    dogridcv = False
+    if dogridcv:
+        optimizers = ['rmsprop', 'adam']
+        init = ['glorot_uniform', 'normal', 'uniform']
+        epochs = [50, 100, 150]
+        epochs = [50, 75, 125]
+        #batches = [5, 10, 20]
+        #param_grid = dict(mlp__optimizer=optimizers, mlp__epochs=epochs, mlp__batch_size=batches, mlp__init=init)
+        param_grid = dict(mlp__optimizer=optimizers, mlp__epochs=epochs, mlp__init=init)
+        print pipeline.get_params().keys()
+        grid = GridSearchCV(estimator=pipeline, param_grid=param_grid)
+        grid_result = grid.fit(X, Y)
+        print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+        means = grid_result.cv_results_['mean_test_score']
+        stds = grid_result.cv_results_['std_test_score']
+        params = grid_result.cv_results_['params']
+        for mean, stdev, param in zip(means, stds, params):
+            print("%f (%f) with: %r" % (mean, stdev, param))
+    else:
+        kfold = KFold(n_splits=5, random_state=seed)
+        results = cross_val_score(pipeline, traindata.drop(tvar, axis=1), traindata[tvar], cv=kfold)
+        print("Standardized: %.2f (%.2f) MSE" % (results.mean(), results.std()))
 
 if __name__ == '__main__':
     sag = SAGMillAnalyzer()
