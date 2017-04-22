@@ -464,7 +464,8 @@ def evalnn(sag, target='PowerDrawMW', offset=5, plfile=None, modelfile=None):
             print("%f (%f) with: %r" % (mean, stdev, param))
     else:
         kfold = KFold(n_splits=5, random_state=seed)
-        results = cross_val_score(pipeline, traindata.drop(tvar, axis=1), traindata[tvar], cv=kfold)
+        results = cross_val_score(pipeline, X, Y, cv=kfold)
+        pipeline.fit(X,Y)
         print("Standardized: %.2f (%.2f) MSE" % (results.mean(), results.std()))
     if modelfile is not None:
         pipeline.named_steps[sagmodel].model.save(modelfile)
