@@ -220,12 +220,16 @@ def drawresiduals(sag, pred, mode='valid'):
             bin_mean, bin_edges, bin_num = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='mean', bins=50)
             bin_std, bin_stdedges, bin_stdnum = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='std', bins=50)
             plt.scatter(residuals.ix[:,0], residuals.ix[:,1],zorder=1, s=1, color='gray')
-            plt.hlines(bin_mean+bin_std, bin_edges[:-1], bin_edges[1:], colors='r', lw=2,label='binned statistic of data',zorder=2)
-            plt.hlines(bin_mean-bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=2,label='binned statistic of data',zorder=2)
-            plt.hlines(bin_mean, bin_edges[:-1], bin_edges[1:], colors='r', lw=2,label='binned statistic of data',zorder=2)
+            plt.hlines(bin_mean, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
+            plt.hlines(bin_mean+bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
+            plt.hlines(bin_mean-bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
+            bin_mid = bin_edges[:-1] + (bin_edges[1:] - bin_edges[:-1])/2.
+            plt.vlines(bin_mid, bin_mean-bin_std, bin_mean+bin_std, colors='b', lw=1,label='binned statistic of data',zorder=2)
             plt.title('{} {}min residuals'.format(i, j))
             plt.xlabel('{}'.format(i))
+            plt.ylabel('Residuals')
             plt.savefig('residual{}{}.png'.format(i,j))
+            plt.close()
 
 
 
