@@ -18,11 +18,13 @@ from sklearn import linear_model
 from sklearn.model_selection import cross_val_predict
 from keras.models import Sequential
 from keras.layers import Dense
+from keras.layers import Dropout
 from keras.wrappers.scikit_learn import KerasRegressor
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
+from sklearn.externals import joblib
 
 
 seed = 1234
@@ -34,9 +36,7 @@ class SAGMillAnalyzer():
     """
     def __init__(self, indata='/run/media/ignacio/data/intellisense/sag/SAG_data.csv'):
         self._indata = indata
-        #self.df['Time'] = self.df['Time'].apply(lambda x: pd.to_datetime(x))
         dateparse = lambda dates: pd.datetime.strptime(dates, '%d/%m/%Y %H:%M')
-        #self.df = pd.read_csv(indata, usecols=range(1,15))
         self.df = pd.read_csv(indata, parse_dates=['Time'], index_col='Time', date_parser=dateparse)
         self.df.drop('Unnamed: 0', axis=1, inplace=True)
         self.df = self.df.dropna()
@@ -90,7 +90,6 @@ def createforecast(sag, targetvar='PowerDrawMW', stepsahead=10):
     lr = linear_model.LinearRegression()
     targetname = '{}Pred'.format(targetvar)
     traindata = gettraindata(sag, mode='train', targetvar=targetvar, offset=stepsahead)
-    #linregfit = lr.fit(sag.train.loc[:sag.train.index[-stepsahead-1],:], yfut)
     linregfit = lr.fit(traindata.drop(targetname, axis=1), traindata[targetname])
     return linregfit
 
@@ -232,7 +231,6 @@ def drawresiduals(sag, pred, mode='valid'):
             plt.close()
 
 
-
 def calcallerrors(sag, preddict, mode='valid'):
     """
     Calculate errors for 1...10 min predictions
@@ -254,27 +252,6 @@ def calcallerrors(sag, preddict, mode='valid'):
     return prederr
 
 
-###def calcresiduals(sag, preddict, mode='valid'):
-###    """
-###    Calculate errors for 1...10 min predictions
-###    wrt validation sample
-###    :param sag: sag object
-###    :param preddict: prediction dict. Key per performance variable
-###    :param target: target variable
-###    :param mode: error on train, valid or test
-###    :return: dictionary with prediction errors with perf vars and minute as keys
-###    """
-###    prederr = {}
-###    for i in sag.perfvars:
-###        errdf = {}
-###        for j in range(1, 11):
-###            errdf['{}min'.format(j)] = (calcprederrormin(sag, preddict[i][1],
-###                                                         mode=mode, offset=j,
-###                                                         target=i))
-###        prederr[i] = errdf
-###    return prederr
-
-
 def plotprederr(preddict):
     """
     Make histogram of prediction errors
@@ -288,6 +265,7 @@ def plotprederr(preddict):
             plt.yscale('log', nonposy='clip')
             plt.savefig('{}_{}_pred_error.png'.format(k, k2))
             plt.close()
+
 
 def plotpredvsdatamin(sag, pred, offset=1, target='PowerDrawMW'):
     """
@@ -437,28 +415,33 @@ def test_stationarity(timeseries):
 def baseline_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
     # create model
     model = Sequential()
-    #model.add(Dropout(dropout, input_shape=(13,)))
+    model.add(Dropout(dropout, input_shape=(13,)))
     model.add(Dense(13, input_dim=13, kernel_initializer=init, activation='relu'))
-    #model.add(Dropout(dropout))
+    model.add(Dropout(dropout))
     model.add(Dense(1, kernel_initializer=init))
     # Compile model
     model.compile(loss='mean_squared_error', optimizer=optimizer)
     return model
 
 
-def evalnn(sag):
+def evalnn(sag, target='PowerDrawMW', offset=5, plfile=None, modelfile=None):
     # evaluate model with standardized dataset
-    tvar = 'PowerDrawMW'
-    traindata = gettraindata(sag, mode='train', targetvar=tvar, offset=5)
-    tvar = '{}Pred'.format(tvar)
+    """
+    Run neural network using Keras
+    :param sag: sag object
+    :param modelfile: name of HDF5 file in case the model is saved
+    :return: pipeline
+    """
+    traindata = gettraindata(sag, mode='train', targetvar=target, offset=offset)
+    tvar = '{}Pred'.format(target)
     seed = 1234
     np.random.seed(seed)
     estimators = []
     estimators.append(('standardize', StandardScaler()))
     #estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, epochs=150, batch_size=10000, verbose=0)))
     #estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, batch_size=100000, verbose=0)))
-    estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, epochs=150, optimizer='rmsprop', init='normal', batch_size=10000, verbose=0)))
-    print estimators[-1][1].get_params().keys()
+    sagmodel = 'model{}_{}min'.format(target, offset)
+    estimators.append((sagmodel, KerasRegressor(build_fn=baseline_model, epochs=1, optimizer='rmsprop', init='normal', batch_size=100000, verbose=0)))
     X = traindata.drop(tvar, axis=1)
     Y = traindata[tvar]
     pipeline = Pipeline(estimators)
@@ -471,7 +454,6 @@ def evalnn(sag):
         #batches = [5, 10, 20]
         #param_grid = dict(mlp__optimizer=optimizers, mlp__epochs=epochs, mlp__batch_size=batches, mlp__init=init)
         param_grid = dict(mlp__optimizer=optimizers, mlp__epochs=epochs, mlp__init=init)
-        print pipeline.get_params().keys()
         grid = GridSearchCV(estimator=pipeline, param_grid=param_grid)
         grid_result = grid.fit(X, Y)
         print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
@@ -484,6 +466,55 @@ def evalnn(sag):
         kfold = KFold(n_splits=5, random_state=seed)
         results = cross_val_score(pipeline, traindata.drop(tvar, axis=1), traindata[tvar], cv=kfold)
         print("Standardized: %.2f (%.2f) MSE" % (results.mean(), results.std()))
+    if modelfile is not None:
+        pipeline.named_steps[sagmodel].model.save(modelfile)
+    if plfile is not None:
+        if plfile is None:
+            print 'You need to provide a file for the keras model as well!'
+            return
+        pipeline.named_steps[sagmodel].model = None
+        # add modelfile member to pipeline
+        pipeline.modelfile = modelfile
+        joblib.dump(pipeline, plfile)
+    return pipeline
+
+
+def nnpredict(sag, pipeline, mode='valid'):
+    """
+    Predict using pipeline with keras model
+    :param sag: the sag object
+    :param model: the trained keras model
+    """
+    if type(pipeline) == 'str':
+        pipeline = joblib.load(pipeline)
+        laststep = pipeline.steps[-1][0]
+        pipeline.named_steps[laststep].model = load_model(pipeline.modelfile)
+    else:
+        laststep = pipeline.steps[-1][0]
+    targetvar, offset = laststep.split('_')
+    targetvar = targetvar.strip('model')
+    offset = int(offset.strip('min'))
+    return targetvar, offset, pipeline.transform(sag.dfdata[mode].ix[:-offset,:]).predict(sag.dfdata[mode].ix[:-offset,:])
+    #return targetvar, offset, pipeline.predict(sag.dfdata[mode].ix[:-offset,:])
+
+
+def runallnnpredict(sag, pipelinelist):
+    """
+    Run Keras NN prediction on all performance variables 
+    and return dict with results
+    """
+    results = {}
+    for i in sag.perfvars:
+        df = pd.DataFrame(index=sag.dfdata[mode].index,
+                          columns = ['1min', '2min', '3min', '4min',
+                                     '5min', '6min', '7min', '8min', 
+                                     '9min', '10min'])
+        results[i] = df
+    for i in pipelinelist:
+        target, offset, pred = nnpredict(sag, pipeline, mode=mode)
+        results[target]['{}min'.format(offset)] = pred 
+    
+    return results
 
 if __name__ == '__main__':
     sag = SAGMillAnalyzer()
