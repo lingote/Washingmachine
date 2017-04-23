@@ -222,42 +222,71 @@ def calcresiduals(sag, yhat, mode='valid', offset=1, target='PowerDrawMW'):
         print 'mode {} is not valid'.format(mode)
         return
     dfdata = sag.dfdata[mode]
-    pidx1 = yhat.index[0]
-    pidx2 = yhat.index[-(1+offset)]
     vidx1 = dfdata.index[offset]
     vidx2 = dfdata.index[-1]
     # Create col name
     offsetcol = '{}min'.format(offset)
-    diffpred = pd.DataFrame(index=pd.date_range(vidx1, vidx2, freq='min'))
     diffpred = pd.DataFrame(index=sag.dfdata[mode].index[offset:])
     diffpred['yobserved'] = sag.dfdata[mode].loc[vidx1:vidx2, target].values
-    diffpred['yerr'] = (sag.dfdata[mode].loc[vidx1:vidx2, target].values
-                        - yhat[offsetcol].dropna().values)
-                        #- pred.loc[pidx1:pidx2, offsetcol].values)
+    yobs_scaled = diffpred['yobserved'].values
+    yobs_scaled = yobs_scaled.reshape(-1, 1)
+    yobs_scaled = yhat.yscalers[offsetcol].transform(yobs_scaled)
+    yhat2 = yhat[offsetcol].dropna().values.reshape(-1,1)
+    diffpred['yerr'] = (yobs_scaled - yhat2)
     return diffpred
 
 
-def drawresiduals(sag, pred, mode='valid'):
+def drawsingleresiduals(sag, yhats, offset=1, mode='valid', target='PowerDrawMW', modeldir='linreg'):
     """
-    Draw residuals vs observed value
+    Draw residuals vs observed value. Save file in subdirectory <modeldir>
+    :param sag: sag object
+    :param yhat: dict with yhat values, keys are perf variables
+    :param mode: train, valid, test
+    :param modeldir: save graphs in this sub-directory
+    """
+    residuals = calcresiduals(sag, yhats, mode=mode, offset=offset, target=target)
+    resmean = np.mean(residuals['yerr'])
+    resstd = np.std(residuals['yerr'])
+    bin_mean, bin_edges, bin_num = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='mean', bins=50)
+    bin_std, bin_stdedges, bin_stdnum = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='std', bins=50)
+    plt.scatter(residuals.ix[:,0], residuals.ix[:,1],zorder=1, s=1, color='gray')
+    plt.hlines(bin_mean, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
+    plt.hlines(bin_mean+bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
+    plt.hlines(bin_mean-bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
+    bin_mid = bin_edges[:-1] + (bin_edges[1:] - bin_edges[:-1])/2.
+    plt.vlines(bin_mid, bin_mean-bin_std, bin_mean+bin_std, colors='b', lw=1,label='binned statistic of data',zorder=2)
+    plt.title('{} {}min residuals'.format(target, offset))
+    plt.xlabel('{}'.format(target))
+    plt.ylabel('Residuals')
+    plt.annotate('<r>={:6.3f}'.format(resmean), xy=(0.1, 0.9), xycoords='axes fraction')
+    plt.annotate('std(r)={:6.3f}'.format(resstd), xy=(0.1, 0.8), xycoords='axes fraction')
+    plt.savefig('{}/residual{}{}.png'.format(modeldir,target,offset))
+    plt.close()
+
+
+def drawresiduals(sag, yhats, target='PowerDrawMW', mode='valid', modeldir='linreg'):
+    """
+    Draw residuals vs observed value for 1-10min predictions for a single target variable. 
+    Save file in subdirectory <modeldir>
+    :param sag: sag object
+    :param yhats: dict with yhat values, keys are perf variables
+    :param mode: train, valid, test
+    :param modeldir: save graphs in this sub-directory
+    """
+    for j in range(1,11):
+        drawsingleresiduals(sag, yhats, offset=j, mode=mode, target=target, modeldir=modeldir)
+
+
+def drawallresiduals(sag, yhats, mode='valid', modeldir='linreg'):
+    """
+    Draw residuals vs observed value. Save file in subdirectory <modeldir>
+    :param sag: sag object
+    :param yhat: dict with yhat values, keys are perf variables
+    :param mode: train, valid, test
+    :param modeldir: save graphs in this sub-directory
     """
     for i in sag.perfvars:
-        if i!='PowerDrawMW': continue
-        for j in range(1,11):
-            residuals = calcresiduals(sag, pred[i], mode=mode, offset=j, target=i)
-            bin_mean, bin_edges, bin_num = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='mean', bins=50)
-            bin_std, bin_stdedges, bin_stdnum = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='std', bins=50)
-            plt.scatter(residuals.ix[:,0], residuals.ix[:,1],zorder=1, s=1, color='gray')
-            plt.hlines(bin_mean, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
-            plt.hlines(bin_mean+bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
-            plt.hlines(bin_mean-bin_std, bin_edges[:-1], bin_edges[1:], colors='b', lw=1,label='binned statistic of data',zorder=2)
-            bin_mid = bin_edges[:-1] + (bin_edges[1:] - bin_edges[:-1])/2.
-            plt.vlines(bin_mid, bin_mean-bin_std, bin_mean+bin_std, colors='b', lw=1,label='binned statistic of data',zorder=2)
-            plt.title('{} {}min residuals'.format(i, j))
-            plt.xlabel('{}'.format(i))
-            plt.ylabel('Residuals')
-            plt.savefig('residual{}{}.png'.format(i,j))
-            plt.close()
+        drawresiduals(sag, yhats[i], target=i, mode=mode, modeldir=modeldir)
 
 
 def calcallerrors(sag, preddict, mode='valid'):
@@ -564,14 +593,14 @@ def nnpredict(sag, pipeline, mode='valid'):
     else:
         laststep = pipeline.steps[-1][0]
     targetvar, colname = laststep.split('_')
-    print 'xxxxx', laststep
     targetvar = targetvar.strip('model')
     targetvar = targetvar.strip('linReg')
-    print 'rrrrr', targetvar
     offset = int(colname.strip('min'))
     X = sag.dfdata[mode].ix[:-offset,:]
-    yhat = pd.DataFrame(pipeline.yscaler.inverse_transform(pipeline.predict(X)),
-                        sag.dfdata[mode].index[:-offset], columns=[colname])
+    #yhat = pd.DataFrame(pipeline.yscaler.inverse_transform(pipeline.predict(X)),
+    yhat = pd.DataFrame(pipeline.predict(X),
+                        index=sag.dfdata[mode].index[:-offset], columns=[colname])
+    yhat.yscaler = pipeline.yscaler
     return targetvar, yhat
 
 
@@ -587,6 +616,7 @@ def singlevarnnpred(sag, pipelinelist, target='PowerDrawMW', mode='valid'):
                           columns = ['1min', '2min', '3min', '4min',
                                      '5min', '6min', '7min', '8min',
                                      '9min', '10min'])
+    dfyhat.yscalers = {}
     for i in pipelinelist:
         if type(i) is not str:
             laststep = i.steps[-1][0]
@@ -597,10 +627,11 @@ def singlevarnnpred(sag, pipelinelist, target='PowerDrawMW', mode='valid'):
             continue
         target, yhat = nnpredict(sag, i, mode=mode)
         dfyhat[yhat.columns[0]] = yhat
+        dfyhat.yscalers[yhat.columns[0]] = yhat.yscaler
     return dfyhat
 
 
-def runallnnpredict(sag, mode='valid', pipelinelist=None):
+def runallnnpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
     """
     Run Keras NN prediction on all performance variables 
     and return dict with results
@@ -611,20 +642,23 @@ def runallnnpredict(sag, mode='valid', pipelinelist=None):
                           columns = ['1min', '2min', '3min', '4min',
                                      '5min', '6min', '7min', '8min', 
                                      '9min', '10min'])
+        df.yscalers = {}
         results[i] = df
     if pipelinelist is None:
         for j in sag.perfvars:
             for i in xrange(1,11):
-               pipeline = linregforecast(sag, targetvar=j, stepsahead=i)
+               if model=='linreg':
+                   pipeline = linregforecast(sag, targetvar=j, stepsahead=i)
                target, yhat = nnpredict(sag, pipeline, mode=mode)
                colname = yhat.columns[0]
                print colname, j
-               results[j][colname] = yhat[colname]
+               results[j].yscalers[colname] = yhat.yscaler
     else:
         for i in pipelinelist:
             target, yhat = nnpredict(sag, pipeline, mode=mode)
             colname = yhat.columns[0]
             results[target][colname] = yhat[colname]
+            results[target].yscalers[colname] = yhat.yscaler
     return results
 
 
