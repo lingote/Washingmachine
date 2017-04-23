@@ -121,45 +121,6 @@ def linregforecast(sag, targetvar='PowerDrawMW', stepsahead=10, savemodel=False,
     return pipeline
 
 
-#def dotenminuteforecast(sag, target='PowerDrawMW', mode='valid'):
-#    """
-#    Create 1-10min forecast for target variable
-#    :param sag: input SAG object
-#    :param target: target var
-#    :param mode: either 'valid', 'train' or 'test'
-#    :return: array with LinearRegression objects (fits) and 
-#             DataFrame with index of test data and columns 
-#             '1min', ..., '10min' for each prediction
-#    """
-#    if mode not in ['test', 'train', 'valid']:
-#        print 'mode {} is not valid'.format(mode)
-#        return
-#    fits = []
-#    for i in xrange(1, 11):
-#        fits.append(linregforecast(sag, targetvar=target, stepsahead=i))
-#        fits[-1].minute = i
-#    dfyhat = (pd.concat([pd.DataFrame(j.predict(sag.dfdata[mode]),
-#                                       index=sag.dfdata[mode].index)
-#                          for j in fits], axis=1, copy=False))
-#    dfyhat.columns = ['{}min'.format(j) for j in range(1, 11)]
-#    return fits, dfyhat
-
-
-def doallpredict(sag, mode='valid'):
-    """
-    Run all minute-wise predictions on all performance variables
-    :param sag: input SAG object
-    :return: dictionary with perf variables as key and predictions as values
-    """
-    if mode not in ['test', 'train', 'valid']:
-        print 'mode {} is not valid'.format(mode)
-        return
-    results = {}
-    for i in sag.perfvars:
-        results[i] = dotenminuteforecast(sag, i, mode)[1]
-    return results
-
-
 def rsquared(sag, results, mode='train'):
     """
     Get R^2 for all performance variable prediction for every
@@ -190,26 +151,6 @@ def rsquared(sag, results, mode='train'):
             r2df.loc[i, j] = r_squared
             r2adjusteddf.loc[i, j] = adjusted_r_squared
     return r2df, r2adjusteddf
-
-
-def calcprederrormin(sag, pred, mode='valid', offset=1, target='PowerDrawMW'):
-    """
-    Compute difference between validation
-    data and prediction at <offset> minutes.
-    """
-    if mode not in ['test', 'train', 'valid']:
-        print 'mode {} is not valid'.format(mode)
-        return
-    dfdata = sag.dfdata[mode]
-    pidx1 = pred.index[0]
-    pidx2 = pred.index[-(1+offset)]
-    vidx1 = dfdata.index[offset]
-    vidx2 = dfdata.index[-1]
-    # Create col name
-    offsetcol = '{}min'.format(offset)
-    diffpred = (sag.dfdata[mode].loc[vidx1:vidx2, target].values
-                - pred.loc[pidx1:pidx2, offsetcol].values)
-    return diffpred
 
 
 def calcresiduals(sag, yhat, mode='valid', offset=1, target='PowerDrawMW'):
@@ -287,72 +228,6 @@ def drawallresiduals(sag, yhats, mode='valid', modeldir='linreg'):
     """
     for i in sag.perfvars:
         drawresiduals(sag, yhats[i], target=i, mode=mode, modeldir=modeldir)
-
-
-def calcallerrors(sag, preddict, mode='valid'):
-    """
-    Calculate errors for 1...10 min predictions
-    wrt validation sample
-    :param sag: sag object
-    :param preddict: prediction dict. Key per performance variable
-    :param target: target variable
-    :param mode: error on train, valid or test
-    :return: dictionary with prediction errors with perf vars and minute as keys
-    """
-    prederr = {}
-    for i in sag.perfvars:
-        errdf = {}
-        for j in range(1, 11):
-            errdf['{}min'.format(j)] = (calcprederrormin(sag, preddict[i][1],
-                                                         mode=mode, offset=j,
-                                                         target=i))
-        prederr[i] = errdf
-    return prederr
-
-
-def plotprederr(preddict):
-    """
-    Make histogram of prediction errors
-    :param preddict: dict with perf vars = key, val = pred error
-    :return: saves histograms as pngs
-    """
-    for k in preddict.iterkeys():
-        for k2, v2 in preddict[k][1].iteritems():
-            plt.hist(v2, 100)
-            plt.title('{} {} pred error'.format(k, k2))
-            plt.yscale('log', nonposy='clip')
-            plt.savefig('{}_{}_pred_error.png'.format(k, k2))
-            plt.close()
-
-
-def plotpredvsdatamin(sag, pred, offset=1, target='PowerDrawMW'):
-    """
-    Plot prediction vs validation data
-    """
-    if offset > 10:
-        print "Offset must be <= 10"
-        return
-    pidx1 = pred.index[0]
-    pidx2 = pred.index[-(1+offset)]
-    vidx1 = sag.valid.index[offset]
-    vidx2 = sag.valid.index[-1]
-    # Create col name
-    offsetcol = '{}min'.format(offset)
-    fig, ax = plt.subplots()
-    (ax.plot(sag.valid.loc[vidx1:vidx2, target].values,
-             pred.loc[pidx1:pidx2, offsetcol].values, 'o'))
-    plt.title("{}: Predicted vs data (validation)".format(target))
-    plt.xlabel("Data {}".format(target))
-    plt.ylabel("Predicted {}".format(target))
-    lims = [
-        np.min([ax.get_xlim(), ax.get_ylim()]),  # min of both axes
-        np.max([ax.get_xlim(), ax.get_ylim()]),  # max of both axes
-    ]
-
-    ax.plot(lims, lims, 'k-', alpha=0.75, zorder=0)
-    (ax.set_xlim([sag.valid.loc[vidx1:vidx2, target].min(),
-                  sag.valid.loc[vidx1:vidx2, target].max()]))
-    plt.show()
 
 
 def normalize(sag, inverse=False):
@@ -513,7 +388,7 @@ def evalnn(sag, target='PowerDrawMW', offset=5):
     return pipeline
 
 
-def nngrideval(sag, target='PowerDrawMW', offset=5, savemodel=False):
+def nngrideval(sag, target='PowerDrawMW', offset=5, savemodel=False, logfile=None):
     # evaluate model with standardized dataset
     """
     Evaluate Keras NN using GridSearchCV
@@ -543,25 +418,26 @@ def nngrideval(sag, target='PowerDrawMW', offset=5, savemodel=False):
     init = ['uniform']
     epochs = [50, 100, 150]
     batches = [10000,50000,100000]
-    epochs = [150]
-    batches = [10000]
     x1='{}__batch_size'.format(sagmodel)
     x2='{}__optimizer'.format(sagmodel)
     x3='{}__epochs'.format(sagmodel)
     x4='{}__init'.format(sagmodel)
     param_grid = {x1:batches, x2:optimizers, x3:epochs, x4:init}
-    grid = GridSearchCV(estimator=pipeline, param_grid=param_grid, n_jobs=3, cv=5)
+    grid = GridSearchCV(estimator=pipeline, param_grid=param_grid, n_jobs=-1, cv=5)
     grid_result = grid.fit(X, Yscaled)
     #grid_result = grid.fit(X, Y)
-    print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
     means = grid_result.cv_results_['mean_test_score']
     stds = grid_result.cv_results_['std_test_score']
     params = grid_result.cv_results_['params']
     bestest = grid_result.best_estimator_
+    loglist = []
+    loglist.append("Best: %f using %s\n" % (grid_result.best_score_, grid_result.best_params_))
     for mean, stdev, param in zip(means, stds, params):
-        print("%f (%f) with: %r" % (mean, stdev, param))
-    print 'bestestimator', bestest
-    print 'bestestimator get_params', bestest.get_params()
+        loglist.append("%f (%f) with: %r\n" % (mean, stdev, param))
+    print loglist
+    if logfile is not None:
+        with open(logfile, 'wb') as f:
+            f.write(''.join(loglist))
     pipeline = bestest
     pipeline.yscaler = yscaler
     #print 'bestestimator _get_param_names', bestest._get_param_names
@@ -579,7 +455,7 @@ def nngrideval(sag, target='PowerDrawMW', offset=5, savemodel=False):
     return pipeline
 
 
-def nnpredict(sag, pipeline, mode='valid'):
+def sagpredict(sag, pipeline, mode='valid'):
     """
     Predict using pipeline with keras model
     :param sag: the sag object
@@ -597,7 +473,6 @@ def nnpredict(sag, pipeline, mode='valid'):
     targetvar = targetvar.strip('linReg')
     offset = int(colname.strip('min'))
     X = sag.dfdata[mode].ix[:-offset,:]
-    #yhat = pd.DataFrame(pipeline.yscaler.inverse_transform(pipeline.predict(X)),
     yhat = pd.DataFrame(pipeline.predict(X),
                         index=sag.dfdata[mode].index[:-offset], columns=[colname])
     yhat.yscaler = pipeline.yscaler
@@ -625,13 +500,13 @@ def singlevarnnpred(sag, pipelinelist, target='PowerDrawMW', mode='valid'):
             targetvar = i.split('_')[1].strip('model')
         if targetvar.find(target)==-1:
             continue
-        target, yhat = nnpredict(sag, i, mode=mode)
+        target, yhat = sagpredict(sag, i, mode=mode)
         dfyhat[yhat.columns[0]] = yhat
         dfyhat.yscalers[yhat.columns[0]] = yhat.yscaler
     return dfyhat
 
 
-def runallnnpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
+def runallsagpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
     """
     Run Keras NN prediction on all performance variables 
     and return dict with results
@@ -649,13 +524,13 @@ def runallnnpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
             for i in xrange(1,11):
                if model=='linreg':
                    pipeline = linregforecast(sag, targetvar=j, stepsahead=i)
-               target, yhat = nnpredict(sag, pipeline, mode=mode)
+               target, yhat = sagpredict(sag, pipeline, mode=mode)
                colname = yhat.columns[0]
                print colname, j
                results[j].yscalers[colname] = yhat.yscaler
     else:
         for i in pipelinelist:
-            target, yhat = nnpredict(sag, pipeline, mode=mode)
+            target, yhat = sagpredict(sag, pipeline, mode=mode)
             colname = yhat.columns[0]
             results[target][colname] = yhat[colname]
             results[target].yscalers[colname] = yhat.yscaler
