@@ -499,8 +499,8 @@ def evalnn2(sag, target='PowerDrawMW', offset=5, savemodel=False):
     init = ['uniform']
     epochs = [50, 100, 150]
     batches = [10000,50000,100000]
-    epochs = [50]
-    batches = [100000]
+    epochs = [150]
+    batches = [10000]
     x1='{}__batch_size'.format(sagmodel)
     x2='{}__optimizer'.format(sagmodel)
     x3='{}__epochs'.format(sagmodel)
