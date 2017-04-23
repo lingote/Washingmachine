@@ -17,6 +17,7 @@ import statsmodels.formula.api as sm
 from sklearn import linear_model
 from sklearn.model_selection import cross_val_predict
 from keras.models import Sequential
+from keras.models import load_model
 from keras.layers import Dense
 from keras.layers import Dropout
 from keras.wrappers.scikit_learn import KerasRegressor
@@ -86,6 +87,10 @@ def gettraindata(sag, mode='train', targetvar='PowerDrawMW', offset=10):
 def createforecast(sag, targetvar='PowerDrawMW', stepsahead=10):
     """
     Create forecast for targetvar with 'stepsahead' of X
+    :param sag: input SAG object
+    :param targetvar: target variable
+    :param stepsahead: minutes ahead
+    :return linregfit: fitted LinearRegression object
     """
     lr = linear_model.LinearRegression()
     targetname = '{}Pred'.format(targetvar)
@@ -100,7 +105,9 @@ def dotenminuteforecast(sag, target='PowerDrawMW', mode='valid'):
     :param sag: input SAG object
     :param target: target var
     :param mode: either 'valid', 'train' or 'test'
-    :return: array with LinearRegression objects (fits) and predicted values
+    :return: array with LinearRegression objects (fits) and 
+             DataFrame with index of test data and columns 
+             '1min', ..., '10min' for each prediction
     """
     if mode not in ['test', 'train', 'valid']:
         print 'mode {} is not valid'.format(mode)
@@ -109,10 +116,10 @@ def dotenminuteforecast(sag, target='PowerDrawMW', mode='valid'):
     for i in xrange(1, 11):
         fits.append(createforecast(sag, targetvar=target, stepsahead=i))
         fits[-1].minute = i
-    valpred = (pd.concat([pd.DataFrame(i.predict(sag.dfdata[mode]),
+    valpred = (pd.concat([pd.DataFrame(j.predict(sag.dfdata[mode]),
                                        index=sag.dfdata[mode].index)
-                          for i in fits], axis=1, copy=False))
-    valpred.columns = ['{}min'.format(i) for i in range(1, 11)]
+                          for j in fits], axis=1, copy=False))
+    valpred.columns = ['{}min'.format(j) for j in range(1, 11)]
     return fits, valpred
 
 
@@ -120,14 +127,14 @@ def doallpredict(sag, mode='valid'):
     """
     Run all minute-wise predictions on all performance variables
     :param sag: input SAG object
-    :return: dictionary with forecast values for all performance variables
+    :return: dictionary with perf variables as key and predictions as values
     """
     if mode not in ['test', 'train', 'valid']:
         print 'mode {} is not valid'.format(mode)
         return
     results = {}
     for i in sag.perfvars:
-        results[i] = dotenminuteforecast(sag, i, mode)
+        results[i] = dotenminuteforecast(sag, i, mode)[1]
     return results
 
 
@@ -147,9 +154,9 @@ def rsquared(sag, results, mode='train'):
     r2adjusteddf = pd.DataFrame(index=sag.perfvars)
     for i in sag.perfvars:
         r2 = []
-        for j in results[i][1]:
+        for j in results[i]:
             offset = int(j.strip('min'))
-            yhat = results[i][1][j]
+            yhat = results[i][j]
             yhat = yhat.loc[yhat.index[:-offset]]
             y = sag.dfdata[mode].loc[sag.dfdata[mode].index[offset:], i]
             sse = sum((y.values - yhat.values)**2)
@@ -198,14 +205,13 @@ def calcresiduals(sag, pred, mode='valid', offset=1, target='PowerDrawMW'):
     vidx1 = dfdata.index[offset]
     vidx2 = dfdata.index[-1]
     # Create col name
-    print vidx1, vidx2
     offsetcol = '{}min'.format(offset)
-    print offsetcol
     diffpred = pd.DataFrame(index=pd.date_range(vidx1, vidx2, freq='min'))
     diffpred = pd.DataFrame(index=sag.dfdata[mode].index[offset:])
     diffpred['yobserved'] = sag.dfdata[mode].loc[vidx1:vidx2, target].values
     diffpred['yerr'] = (sag.dfdata[mode].loc[vidx1:vidx2, target].values
-                             - pred.loc[pidx1:pidx2, offsetcol].values)
+                        - pred[offsetcol].values)
+                        #- pred.loc[pidx1:pidx2, offsetcol].values)
     return diffpred
 
 
@@ -215,7 +221,7 @@ def drawresiduals(sag, pred, mode='valid'):
     """
     for i in sag.perfvars:
         for j in range(1,11):
-            residuals = calcresiduals(sag, pred[i][1], mode=mode, offset=j, target=i)
+            residuals = calcresiduals(sag, pred[i], mode=mode, offset=j, target=i)
             bin_mean, bin_edges, bin_num = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='mean', bins=50)
             bin_std, bin_stdedges, bin_stdnum = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='std', bins=50)
             plt.scatter(residuals.ix[:,0], residuals.ix[:,1],zorder=1, s=1, color='gray')
@@ -424,7 +430,7 @@ def baseline_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
     return model
 
 
-def evalnn(sag, target='PowerDrawMW', offset=5, plfile=None, modelfile=None):
+def evalnn(sag, target='PowerDrawMW', offset=5):
     # evaluate model with standardized dataset
     """
     Run neural network using Keras
@@ -438,45 +444,93 @@ def evalnn(sag, target='PowerDrawMW', offset=5, plfile=None, modelfile=None):
     np.random.seed(seed)
     estimators = []
     estimators.append(('standardize', StandardScaler()))
-    #estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, epochs=150, batch_size=10000, verbose=0)))
-    #estimators.append(('mlp', KerasRegressor(build_fn=baseline_model, batch_size=100000, verbose=0)))
+    #estimators.append(('standardize', MinMaxScaler()))
     sagmodel = 'model{}_{}min'.format(target, offset)
-    estimators.append((sagmodel, KerasRegressor(build_fn=baseline_model, epochs=1, optimizer='rmsprop', init='normal', batch_size=100000, verbose=0)))
+    trainmodel = KerasRegressor(build_fn=baseline_model, epochs=50, optimizer='rmsprop', init='uniform', batch_size=100000, verbose=0)
+    estimators.append((sagmodel, KerasRegressor(build_fn=baseline_model, epochs=50, optimizer='rmsprop', init='uniform', batch_size=100000, verbose=0)))
     X = traindata.drop(tvar, axis=1)
     Y = traindata[tvar]
     pipeline = Pipeline(estimators)
-    dogridcv = False
-    if dogridcv:
-        optimizers = ['rmsprop', 'adam']
-        init = ['glorot_uniform', 'normal', 'uniform']
-        epochs = [50, 100, 150]
-        epochs = [50, 75, 125]
-        #batches = [5, 10, 20]
-        #param_grid = dict(mlp__optimizer=optimizers, mlp__epochs=epochs, mlp__batch_size=batches, mlp__init=init)
-        param_grid = dict(mlp__optimizer=optimizers, mlp__epochs=epochs, mlp__init=init)
-        grid = GridSearchCV(estimator=pipeline, param_grid=param_grid)
-        grid_result = grid.fit(X, Y)
-        print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
-        means = grid_result.cv_results_['mean_test_score']
-        stds = grid_result.cv_results_['std_test_score']
-        params = grid_result.cv_results_['params']
-        for mean, stdev, param in zip(means, stds, params):
-            print("%f (%f) with: %r" % (mean, stdev, param))
-    else:
-        kfold = KFold(n_splits=5, random_state=seed)
-        results = cross_val_score(pipeline, X, Y, cv=kfold)
-        pipeline.fit(X,Y)
-        print("Standardized: %.2f (%.2f) MSE" % (results.mean(), results.std()))
-    if modelfile is not None:
+    kfold = KFold(n_splits=5, random_state=seed)
+    results = cross_val_score(pipeline, X, Y, cv=kfold)
+    pipeline.fit(X,Y)
+    print 'pipeline std', pipeline.predict(X)
+    Xstand = StandardScaler().fit_transform(X)
+    yscaler = StandardScaler().fit(Y)
+    trainmodel.fit(Xstand, yscaler.transform(Y))
+    #trainmodel.predict(Xstand)
+    #stdres = cross_val_score(trainmodel, Xstand, Ystand, cv=kfold)
+    print 'manual standardize', trainmodel.predict(Xstand)
+    print 'manual orig ', yscaler.inverse_transform(trainmodel.predict(Xstand))
+    print 'pipeline standardize', pipeline.predict(X)
+    print 'pipeline orig ', yscaler.inverse_transform(pipeline.predict(X))
+    #pipeline.fit(Y)
+    print("Standardized: %.2f (%.2f) MSE" % (results.mean(), results.std()))
+    # Add yscaler to pipeline for later use
+    pipeline.yscaler = yscaler 
+    return pipeline
+
+
+def evalnn2(sag, target='PowerDrawMW', offset=5, savemodel=False):
+    # evaluate model with standardized dataset
+    """
+    Run neural network using Keras
+    :param sag: sag object
+    :param modelfile: name of HDF5 file in case the model is saved
+    :return: pipeline
+    """
+    traindata = gettraindata(sag, mode='train', targetvar=target, offset=offset)
+    tvar = '{}Pred'.format(target)
+    seed = 1234
+    np.random.seed(seed)
+    estimators = []
+    estimators.append(('standardize', StandardScaler()))
+    sagmodel = 'model{}_{}min'.format(target, offset)
+    estimators.append((sagmodel, KerasRegressor(build_fn=baseline_model, epochs=150, optimizer='rmsprop', init='normal', batch_size=10000, verbose=0)))
+    X = traindata.drop(tvar, axis=1)
+    Y = traindata[tvar]
+    Y = Y.values.reshape(-1, 1)
+    yscaler = StandardScaler().fit(Y)
+    Yscaled = yscaler.transform(Y)
+    pipeline = Pipeline(estimators)
+    optimizers = ['rmsprop', 'adam']
+    init = ['glorot_uniform', 'normal', 'uniform']
+    optimizers = ['adam']
+    init = ['uniform']
+    epochs = [50, 100, 150]
+    batches = [10000,50000,100000]
+    epochs = [50]
+    batches = [100000]
+    x1='{}__batch_size'.format(sagmodel)
+    x2='{}__optimizer'.format(sagmodel)
+    x3='{}__epochs'.format(sagmodel)
+    x4='{}__init'.format(sagmodel)
+    param_grid = {x1:batches, x2:optimizers, x3:epochs, x4:init}
+    grid = GridSearchCV(estimator=pipeline, param_grid=param_grid, n_jobs=3, cv=5)
+    #grid_result = grid.fit(X, Yscaled)
+    grid_result = grid.fit(X, Y)
+    print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+    means = grid_result.cv_results_['mean_test_score']
+    stds = grid_result.cv_results_['std_test_score']
+    params = grid_result.cv_results_['params']
+    bestest = grid_result.best_estimator_
+    for mean, stdev, param in zip(means, stds, params):
+        print("%f (%f) with: %r" % (mean, stdev, param))
+    print 'bestestimator', bestest
+    print 'bestestimator get_params', bestest.get_params()
+    pipeline = bestest
+    pipeline.yscaler = yscaler
+    #print 'bestestimator _get_param_names', bestest._get_param_names
+    if savemodel:
+        plfile = 'skpipeline_{}.pkl'.format(sagmodel)
+        modelfile = 'skmodel_{}.h5'.format(sagmodel)
+        # Save model file first
         pipeline.named_steps[sagmodel].model.save(modelfile)
-    if plfile is not None:
-        if plfile is None:
-            print 'You need to provide a file for the keras model as well!'
-            return
         pipeline.named_steps[sagmodel].model = None
         # add modelfile member to pipeline
         pipeline.modelfile = modelfile
         joblib.dump(pipeline, plfile)
+        print 'Saved pipeline to {} and mode to {}'.format(plfile, modelfile)
     return pipeline
 
 
@@ -486,17 +540,41 @@ def nnpredict(sag, pipeline, mode='valid'):
     :param sag: the sag object
     :param model: the trained keras model
     """
-    if type(pipeline) == 'str':
+    if type(pipeline) is str:
         pipeline = joblib.load(pipeline)
         laststep = pipeline.steps[-1][0]
+        print pipeline.modelfile
         pipeline.named_steps[laststep].model = load_model(pipeline.modelfile)
     else:
         laststep = pipeline.steps[-1][0]
-    targetvar, offset = laststep.split('_')
+    targetvar, colname = laststep.split('_')
     targetvar = targetvar.strip('model')
-    offset = int(offset.strip('min'))
-    return targetvar, offset, pipeline.transform(sag.dfdata[mode].ix[:-offset,:]).predict(sag.dfdata[mode].ix[:-offset,:])
-    #return targetvar, offset, pipeline.predict(sag.dfdata[mode].ix[:-offset,:])
+    offset = int(colname.strip('min'))
+    X = sag.dfdata[mode].ix[:-offset,:]
+    yhat = pd.DataFrame(pipeline.yscaler.inverse_transform(pipeline.predict(X)),
+                        sag.dfdata[mode].index[:-offset], columns=[colname])
+    return targetvar, yhat
+
+
+def onevarpredict(sag, pipelinelist, target='PowerDrawMW', mode='valid'):
+    """
+    Get 1-10minute prediction for variable <target>
+    :param sag: the sag object
+    :param pipelinelist: list with pipeline object, one for each minute
+    :param target: target value
+    :param mode: valid, test, train
+    """
+    dfpredict = pd.DataFrame(index=sag.dfdata[mode].index,
+                          columns = ['1min', '2min', '3min', '4min',
+                                     '5min', '6min', '7min', '8min',
+                                     '9min', '10min'])
+    for i in pipelinelist:
+        targetvar, colname = laststep.split('_')
+        if targetvar.find(target)==-1:
+            continue
+            target, pred = nnpredict(sag, pipeline, mode=mode)
+            dfpredict[pred.columns[0]] = pred
+    return dfpredict
 
 
 def runallnnpredict(sag, pipelinelist):
