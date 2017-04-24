@@ -2,6 +2,11 @@
 """
 Define some Neural Network models for Keras
 """
+from keras.models import Sequential
+import keras.models
+from keras.layers import Dense
+from keras.layers import Dropout
+from keras.constraints import maxnorm
 
 def test_stationarity(timeseries):
     #Determing rolling statistics
@@ -33,7 +38,7 @@ def baseline_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
     """
     A basic Neural Network
     """
-    model = Sequential()
+    model = keras.models.Sequential()
     model.add(Dropout(dropout, input_shape=(13,)))
     model.add(Dense(13, input_dim=13, kernel_initializer=init, activation='relu'))
     model.add(Dropout(dropout))
@@ -43,7 +48,23 @@ def baseline_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
     return model
 
 
-def larger_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
+def medium_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
+    """
+    A simple Neural Network
+    """
+    model = Sequential()
+    model.add(Dropout(dropout, input_shape=(13,)))
+    model.add(Dense(18, input_dim=13, kernel_initializer=init, activation='relu', kernel_constraint=maxnorm(3)))
+    model.add(Dropout(dropout))
+    model.add(Dense(8, kernel_initializer=init, activation='relu', kernel_constraint=maxnorm(3)))
+    model.add(Dropout(dropout))
+    model.add(Dense(1, kernel_initializer=init))
+    # Compile model
+    model.compile(loss='mean_squared_error', optimizer=optimizer)
+    return model
+
+
+def xlarge_model(optimizer='rmsprop', init='glorot_uniform', dropout=0.2):
     """
     A simple Neural Network
     """

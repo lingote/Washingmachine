@@ -17,17 +17,17 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import statsmodels.formula.api as sm
 from sklearn import linear_model
 from sklearn.model_selection import cross_val_predict
-from keras.models import Sequential
-from keras.models import load_model
-from keras.layers import Dense
-from keras.layers import Dropout
-from keras.constraints import maxnorm
 from keras.wrappers.scikit_learn import KerasRegressor
+from keras.models import load_model
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
 from sklearn.externals import joblib
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import Dropout
+from keras.constraints import maxnorm
 import SAGModels
 
 
@@ -39,6 +39,9 @@ class SAGMillAnalyzer():
     Main class for SAG mill performance prediction analysis
     """
     def __init__(self, indata='/run/media/ignacio/data/intellisense/sag/SAG_data.csv'):
+        """
+        Return a new SAG object
+        """
         self._indata = indata
         dateparse = lambda dates: pd.datetime.strptime(dates, '%d/%m/%Y %H:%M')
         self.df = pd.read_csv(indata, parse_dates=['Time'], index_col='Time', date_parser=dateparse)
@@ -86,7 +89,7 @@ class SAGMillAnalyzer():
             return
         yfut = (pd.Series(self.dfdata[mode].loc[self.dfdata[mode].index[offset:],
                                                targetvar].values,
-                          index=sag.dfdata[mode]
+                          index=self.dfdata[mode]
                           .index[:-offset]))
         yfut.name = '{}Pred'.format(targetvar)
         return (pd.concat([self.dfdata[mode].loc[:self.dfdata[mode].index[-offset-1],
@@ -103,7 +106,7 @@ class SAGMillAnalyzer():
         """
         lr = linear_model.LinearRegression()
         targetname = '{}Pred'.format(targetvar)
-        traindata = gettraindata(mode='train', targetvar=targetvar, offset=stepsahead)
+        traindata = self.gettraindata(mode='train', targetvar=targetvar, offset=stepsahead)
         #linregfit = lr.fit(traindata.drop(targetname, axis=1), traindata[targetname])
 
         estimators = []
@@ -117,6 +120,7 @@ class SAGMillAnalyzer():
         Yscale = yscaler.transform(Y)
         pipeline = Pipeline(estimators)
         pipeline.fit(X,Yscale)
+        # Adding the yscaler to the pipeline
         pipeline.yscaler = yscaler
         if savemodel:
             plfile = 'skpipeline_{}.pkl'.format(sagmodel)
@@ -190,7 +194,7 @@ class SAGMillAnalyzer():
         :param mode: train, valid, test
         :param modeldir: save graphs in this sub-directory
         """
-        residuals = calcresiduals(self, yhats, mode=mode, offset=offset, target=target)
+        residuals = self.calcresiduals(yhats, mode=mode, offset=offset, target=target)
         resmean = np.mean(residuals['yerr'])
         resstd = np.std(residuals['yerr'])
         bin_mean, bin_edges, bin_num = binned_statistic(residuals.ix[:,0], residuals.ix[:,1], statistic='mean', bins=50)
@@ -220,7 +224,7 @@ class SAGMillAnalyzer():
         :param modeldir: save graphs in this sub-directory
         """
         for j in range(1,11):
-            drawsingleresiduals(self, yhats, offset=j, mode=mode, target=target, modeldir=modeldir)
+            self.drawsingleresiduals(yhats, offset=j, mode=mode, target=target, modeldir=modeldir)
 
 
     def drawallresiduals(self, yhats, mode='valid', modeldir='linreg'):
@@ -232,12 +236,13 @@ class SAGMillAnalyzer():
         :param modeldir: save graphs in this sub-directory
         """
         for i in self.perfvars:
-            drawresiduals(self, yhats[i], target=i, mode=mode, modeldir=modeldir)
+            self.drawresiduals(yhats[i], target=i, mode=mode, modeldir=modeldir)
 
 
     def normalize(self, inverse=False):
         """
         Transform dataset using the scaler object attached to the SAG object
+        :param inverse: True if revert normalization
         """
         colnames = self.dfdata['train'].columns
         trainindex = self.dfdata['train'].index
@@ -259,6 +264,7 @@ class SAGMillAnalyzer():
     def dohistograms(df, dfcol):
         """
         Create simple histograms for exploratory analysis
+        :param dfcol: dataframe column
         """
         plt.close('all')
         fig = plt.figure()
@@ -284,6 +290,7 @@ class SAGMillAnalyzer():
     def dotimeseries(df, dfcol):
         """
         Plot time series of variables
+        :param dfcol: dataframe column
         """
         plt.close('all')
         ts = df[dfcol]
@@ -300,11 +307,11 @@ class SAGMillAnalyzer():
         :return:
         """
         for i in self.dfdata['train'].columns.values:
-            dohistograms(self.dfdata['train'], i)
+            self.dohistograms(self.dfdata['train'], i)
 
         for i in self.dfdata['train'].columns.values:
             #plt.close()
-            dotimeseries(self.dfdata['train'], i)
+            self.dotimeseries(self.dfdata['train'], i)
             #plt.close('all')
 
 
@@ -323,8 +330,6 @@ class SAGMillAnalyzer():
                 plt.close('all')
 
 
-
-
     def evalnn(self, target='PowerDrawMW', offset=5):
         # evaluate model with standardized dataset
         """
@@ -333,14 +338,15 @@ class SAGMillAnalyzer():
         :param modelfile: name of HDF5 file in case the model is saved
         :return: pipeline
         """
-        traindata = gettraindata(self, mode='train', targetvar=target, offset=offset)
+        traindata = self.gettraindata(mode='train', targetvar=target, 
+                                      offset=offset)
         tvar = '{}Pred'.format(target)
         estimators = []
         estimators.append(('standardize', StandardScaler()))
-        #estimators.append(('standardize', MinMaxScaler()))
         sagmodel = 'model{}_{}min'.format(target, offset)
-        #trainmodel = KerasRegressor(build_fn=baseline_model, epochs=50, optimizer='rmsprop', init='uniform', batch_size=100000, verbose=0)
-        trainmodel = KerasRegressor(build_fn=larger_model, epochs=50, optimizer='rmsprop', init='uniform', batch_size=100000, verbose=0)
+        trainmodel = KerasRegressor(build_fn=SAGModels.xlarge_model, epochs=50,
+                                    optimizer='rmsprop', init='uniform',
+                                    batch_size=100000, verbose=0)
         estimators.append((sagmodel, trainmodel))
         X = traindata.drop(tvar, axis=1)
         Y = traindata[tvar]
@@ -356,22 +362,25 @@ class SAGMillAnalyzer():
         return pipeline
 
 
-    def nngrideval(self, target='PowerDrawMW', offset=5, savemodel=False, logfile=None):
+    def nngrideval(self, target='PowerDrawMW', offset=5, savemodel=False, savedir = '', logfile=None):
         # evaluate model with standardized dataset
         """
         Evaluate Keras NN using GridSearchCV
         :param sag: sag object
         :param target: target variable
         :param offset: minute offset of prediction
-        :param savemodel: persistify model, filename is extracted from parameters
+        :param savemodel: saves pipeline to pkl file and keras model to h5 file
+                          filename is generated from parameters
         :return: pipeline
         """
-        traindata = gettraindata(self, mode='train', targetvar=target, offset=offset)
+        traindata = self.gettraindata(mode='train', targetvar=target, offset=offset)
         tvar = '{}Pred'.format(target)
         estimators = []
         estimators.append(('standardize', StandardScaler()))
         sagmodel = 'model{}_{}min'.format(target, offset)
-        estimators.append((sagmodel, KerasRegressor(build_fn=larger_model,
+        #estimators.append((sagmodel, KerasRegressor(build_fn=larger_model,
+        #estimators.append((sagmodel, KerasRegressor(build_fn=SAGModels.baseline_model,
+        estimators.append((sagmodel, KerasRegressor(build_fn=SAGModels.medium_model,
                            epochs=150, optimizer='rmsprop', init='normal',
                            batch_size=10000, verbose=0)))
         X = traindata.drop(tvar, axis=1)
@@ -380,14 +389,16 @@ class SAGMillAnalyzer():
         yscaler = StandardScaler().fit(Y)
         Yscaled = yscaler.transform(Y)
         pipeline = Pipeline(estimators)
-        optimizers = ['adam']
         init = ['uniform']
         optimizers = ['rmsprop', 'adam']
         init = ['glorot_uniform', 'normal', 'uniform']
         epochs = [50, 100, 150]
         batches = [10000,50000,100000]
         epochs = [25, 50]
+        epochs = [50]
         batches = [100000]
+        optimizers = ['adam']
+        init = ['normal']
         x1='{}__batch_size'.format(sagmodel)
         x2='{}__optimizer'.format(sagmodel)
         x3='{}__epochs'.format(sagmodel)
@@ -409,11 +420,11 @@ class SAGMillAnalyzer():
             with open(logfile, 'wb') as f:
                 f.write(''.join(loglist))
         pipeline = bestest
+        # Hack: add yscaler to pipeline for later use
         pipeline.yscaler = yscaler
-        #print 'bestestimator _get_param_names', bestest._get_param_names
         if savemodel:
-            plfile = 'skpipeline_{}.pkl'.format(sagmodel)
-            modelfile = 'skmodel_{}.h5'.format(sagmodel)
+            plfile = '{}/skpipeline_{}.pkl'.format(savedir, sagmodel)
+            modelfile = '{}/skmodel_{}.h5'.format(savedir, sagmodel)
             pltemp = pipeline
             # Save model file first
             pltemp.named_steps[sagmodel].model.save(modelfile)
@@ -470,7 +481,7 @@ class SAGMillAnalyzer():
                 targetvar = i.split('_')[1].strip('model')
             if targetvar.find(target)==-1:
                 continue
-            target, yhat = sagpredict(self, i, mode=mode)
+            target, yhat = self.sagpredict(i, mode=mode)
             dfyhat[yhat.columns[0]] = yhat
             dfyhat.yscalers[yhat.columns[0]] = yhat.yscaler
         return dfyhat
@@ -502,46 +513,20 @@ class SAGMillAnalyzer():
             for j in self.perfvars:
                 for i in xrange(1,11):
                    if model=='linreg':
-                       pipeline = linregforecast(self, targetvar=j, stepsahead=i)
+                       pipeline = self.linregforecast(targetvar=j, stepsahead=i)
                    else:
-                       pipeline = nngrideval(self, target=j, offset=i, savemodel=False, logfile=None)
-                   target, yhat = sagpredict(self, pipeline, mode=mode)
+                       pipeline = self.nngrideval(target=j, offset=i, savemodel=False, logfile=None)
+                   target, yhat = self.sagpredict(pipeline, mode=mode)
                    colname = yhat.columns[0]
                    print colname, j
                    results[j].yscalers[colname] = yhat.yscaler
         else:
             for i in pipelinelist:
-                target, yhat = sagpredict(self, i, mode=mode)
+                target, yhat = self.sagpredict(i, mode=mode)
                 colname = yhat.columns[0]
                 results[target][colname] = yhat[colname]
                 results[target].yscalers[colname] = yhat.yscaler
         return results
-
-
-def test_stationarity(timeseries):
-    #Determing rolling statistics
-    #rolmean = pd.rolling_mean(timeseries, window=12)
-    #rolstd = pd.rolling_std(timeseries, window=12)
-    roller = timeseries.rolling(window=12, center=False)
-    rolmean = roller.mean()
-    rolstd = roller.std()
-    #Plot rolling statistics:
-    orig = plt.plot(timeseries, color='blue', label='Original')
-    mean = plt.plot(rolmean, color='red', label='Rolling Mean')
-    std = plt.plot(rolstd, color='black', label='Rolling Std')
-    plt.legend(loc='best')
-    plt.title('Rolling Mean & Standard Deviation')
-    plt.show(block=False)
-
-    #Perform Dickey-Fuller test:
-    print 'Results of Dickey-Fuller Test:'
-    dftest = adfuller(timeseries, autolag='AIC')
-    dfoutput = (pd.Series(dftest[0:4],
-                          index=['Test Statistic', 'p-value',
-                                 '#Lags Used', 'Number of Observations Used']))
-    for key, value in dftest[4].items():
-        dfoutput['Critical Value (%s)'%key] = value
-    print dfoutput
 
 
 if __name__ == '__main__':
