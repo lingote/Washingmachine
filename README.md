@@ -14,6 +14,11 @@ Python package SAGMill
 - SAGModels.py: Various keras models
 
 
+LSTM results
+-------------------------
+
+- lstm/: directory with results of LSTM prediction
+
 Installation
 ------------
 
