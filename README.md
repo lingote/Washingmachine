@@ -11,6 +11,7 @@ Python package SAGMill
 
 - SAGData.py: Prepare data, split train, valid and test data
 - SAGMillAnalysis.py: run analysis
+- SAGModels.py: Various keras models
 
 
 Installation
