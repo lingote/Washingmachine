@@ -686,8 +686,8 @@ def runallsagpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
     return results
 
 
-def fitlstm(sag, target='PowerDrawMW', offset=3, neurons=8, epochs=200,
-            batch_size=2000, savemodel=True):
+def fitlstm(sag, target='PowerDrawMW', offset=3, neurons=8, epochs=100,
+            batch_size=200, savemodel=True):
     """
     Run LSTM fit on SAG training data
     """
@@ -772,7 +772,7 @@ def lstmpredict(sag, modelinfo, mode='train'):
 
 
 def tenminuteforecast(sag, target='Torque', modellist=None,
-                      mode='train', tocsv=False):
+                      mode='train', tocsv=False, modeldir='lstm/fitresults/'):
     """
     run 1-10 minute prediction with LSTM on target
     """
@@ -786,8 +786,8 @@ def tenminuteforecast(sag, target='Torque', modellist=None,
     for modelinfo in modellist:
         # Assume that target name is in file
         if type(modelinfo) is str:
-            modelinfo = joblib.load(modelinfo)
-            modelinfo.modelname = load_model(modelinfo.modelname)
+            modelinfo = joblib.load(modeldir+modelinfo)
+            modelinfo.modelname = load_model(modeldir+modelinfo.modelname)
         if modelinfo.target != target:
             print 'modelobject not for target {}'.format(target)
             continue
@@ -805,23 +805,3 @@ def tenminuteforecast(sag, target='Torque', modellist=None,
         yhatdf.to_csv(csvout)
         print 'Ten minute forecast for {} written to {}'.format(target, csvout)
     return yhatdf
-
-
-def difference(dfdata, interval=1):
-    """
-    Create data with difference
-    """
-    diffdata = pd.DataFrame(index=dfdata.index, columns=dfdata.columns)
-    for i in dfdata.columns:
-        diffdata[i] = dfdata[i].diff(interval).dropna()
-    return diffdata
-
-
-def inverse_difference(diffdata, refdata, interval=1):
-    """
-    revert data difference
-    """
-    dforig = pd.DataFrame(index=diffdata.index, columns=diffdata.columns)
-    dforig = (diffdata.shift(-interval) + refdata).shift(interval)
-    dforig.ix[0] = refdata.ix[0]
-    return dforig

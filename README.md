@@ -27,3 +27,9 @@ Run LSTM fit and prediction
 
        python runlstm.py -t SCATSConvBelt -m train -s True -f
 
+
+Draw residuals using csv with yhat 
+----------------------------------
+
+       python drawlstmresiduals.py -t Torque -m valid -f lstmForecast_PowerDrawMW_4neurons_100ep_200batch_valid.csv
+
