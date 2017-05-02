@@ -105,7 +105,6 @@ def lstm_model(batch_size, neurons, lookback, nfeatures):
     """
     LSTM model
     """
-    print 'y3'
     dropout = 0.2
     model = Sequential()
     model.add(LSTM(neurons, batch_input_shape=(batch_size, lookback, nfeatures), stateful=False, return_sequences=False))
