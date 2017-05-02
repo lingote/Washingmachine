@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 from unittest import TestCase, main
+import pandas as pd
 from SAGMill.SAGData import SAGMillData
 
 
@@ -21,11 +22,12 @@ class TestSAGMillData(TestCase):
         sag = SAGMillData()
         for i in range(1, 11):
             dftest = sag.gettraindata(mode='train', targetvar='Torque', offset=i)
-            sumdiff = (df.ix[dftest['TorquePred'].index,'Motor Torque (%)']
-                       - dftest['TorquePred'].shift(i)).sum()
+            #diff = (sag.df.ix[dftest['TorquePred'].index,'Motor Torque (%)']
+            diff = (sag.df.ix[dftest['TorquePred'].index,'Torque']
+                   - dftest['TorquePred'].shift(i))
+            sumdiff = diff.sum()
             self.assertEquals(sumdiff,0)
-            numnull = pd.isnull(df.ix[dftest['TorquePred'].index,'Motor Torque (%)']
-                                - dftest['TorquePred'].shift(i)).sum()
+            numnull = pd.isnull(diff).sum()
             self.assertEquals(numnull,i)
 
 

@@ -39,6 +39,7 @@ class SAGMillData(object):
         self.df.columns = newcols
         self.dfdata = {}
         # Use last month of data for testing
+        self.teststart = teststart
         self.testindex = self.df[teststart:].index
         dataindex = self.df[:teststart].index
         self.trainindex = dataindex[:2*dataindex.shape[0]/3]
@@ -58,7 +59,7 @@ class SAGMillData(object):
 
     def __getitem__(self, key):
         if key == 'test':
-            return self.df[self.testindex]
+            return self.df[self.teststart]
         elif key == 'train':
             return self.df.ix[self.trainindex]
         elif key == 'valid':

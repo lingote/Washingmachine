@@ -159,6 +159,7 @@ def drawsingleresiduals(sag, yhats, offset=1, mode='valid',
     :param modeldir: save graphs in this sub-directory
     """
     residuals = calcresiduals(sag, yhats, mode=mode, offset=offset, target=target)
+    rmse = np.sqrt(np.sum((residuals['yhat'] - residuals['yobserved'])**2)/residuals['yhat'].shape[0])
     residuals.dropna(inplace=True)
     resmean = np.mean(residuals['yerr'])
     resstd = np.std(residuals['yerr'])
@@ -179,16 +180,21 @@ def drawsingleresiduals(sag, yhats, offset=1, mode='valid',
     bin_mid = bin_edges[:-1] + (bin_edges[1:] - bin_edges[:-1])/2.
     plt.vlines(bin_mid, bin_mean-bin_std, bin_mean+bin_std, colors='b',
                lw=1, label='binned statistic of data', zorder=2)
-    plt.title('{} {}min residuals using {}'.format(target, offset, model))
+    plt.title('{} {}min residuals using {}'.format(target, offset, mode))
     plt.xlabel('{}'.format(target))
     plt.ylabel('yobs - ypred')
     #plt.ylim([-80,70])
     plt.annotate('<r>={:6.3f}'.format(resmean), xy=(0.1, 0.9), xycoords='axes fraction')
     plt.annotate('std(r)={:6.3f}'.format(resstd), xy=(0.1, 0.8), xycoords='axes fraction')
+    plt.annotate('RMSE={:6.3f}'.format(rmse), xy=(0.7, 0.2), xycoords='axes fraction')
     plt.annotate('{} sample'.format(mode), xy=(0.8, 0.9), xycoords='axes fraction')
     #plt.clf()
     #plt.imshow(heatmap, zorder=1)#, extent = extent)#, origin='lower')
-    plt.savefig('{}/residual{}{}_{}.png'.format(modeldir, target, offset, mode))
+    figfile = ('{}/residual{}{}min_{}neurons_'
+               '{}ep_{}batch_{}.png').format(modeldir, target, offset, 
+                                            yhats.neurons, yhats.epochs, 
+                                            yhats.batch, mode)
+    plt.savefig(figfile)
     plt.close()
 
 
@@ -202,7 +208,7 @@ def drawresiduals(sag, yhats, target='PowerDrawMW', mode='valid', modeldir='linr
     :param modeldir: save graphs in this sub-directory
     """
     for j in range(1, 11):
-        sag.drawsingleresiduals(yhats, offset=j, mode=mode, target=target, modeldir=modeldir)
+        drawsingleresiduals(sag, yhats, offset=j, mode=mode, target=target, modeldir=modeldir)
 
 
 def drawallresiduals(sag, yhats, mode='valid', modeldir='linreg'):
@@ -680,8 +686,8 @@ def runallsagpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
     return results
 
 
-def fitlstm(sag, target='PowerDrawMW', offset=3, neurons=4, epochs=100,
-            batch_size=200, savemodel=True):
+def fitlstm(sag, target='PowerDrawMW', offset=3, neurons=8, epochs=200,
+            batch_size=2000, savemodel=True):
     """
     Run LSTM fit on SAG training data
     """
@@ -747,9 +753,9 @@ def lstmpredict(sag, modelinfo, mode='train'):
     lstmmodel = None
     if type(modelinfo) is str:
         modelinfo = joblib.load(modelinfo)
+    lstmmodel = modelinfo.modelname
+    if type(modelinfo.modelname) is str:
         lstmmodel = load_model(modelinfo.modelname)
-    else:
-        lstmmodel = modelinfo.modelname
     target = modelinfo.target
     X = sag[mode][:-modelinfo.offset]
     X = X[[target]]
@@ -788,9 +794,15 @@ def tenminuteforecast(sag, target='Torque', modellist=None,
         tcol = '{}min'.format(modelinfo.offset)
         yhatnorm, yhat = lstmpredict(sag, modelinfo, mode)
         yhatdf[tcol].ix[:-modelinfo.offset] = yhat.ravel()
+        # Forward meta data
+        yhatdf.epochs = modelinfo.epochs
+        yhatdf.batch = modelinfo.batch
+        yhatdf.neurons = modelinfo.neurons
     if tocsv:
-        csvout = 'lstmForecast_{}.csv'.format(target)
-        yhatdf.to_csv('lstmForecast_{}_{}.csv'.format(target, mode))
+        csvout = ('lstmForecast_{}_{}neurons_{}ep_{}batch_{}.csv'.
+                  format(target, yhatdf.neurons, yhatdf.epochs, 
+                         yhatdf.batch, mode))
+        yhatdf.to_csv(csvout)
         print 'Ten minute forecast for {} written to {}'.format(target, csvout)
     return yhatdf
 
