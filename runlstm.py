@@ -25,15 +25,15 @@ def main():
                 'Torque', 'PowerDrawMW', 'SCATSConvBelt']
     parser = argparse.ArgumentParser(description=("Run SAG prediction for performance variable"))
     parser.add_argument('-t', '--target-var', type=str, required=True,
-                        choices=perfvars, dest='t')
+                        choices=perfvars, dest='t', help='target variable')
     parser.add_argument('-s', '--save-forecast', type=bool, required=False,
-                        default=False, dest='s')
+                        default=False, dest='s', help='save forecast to csv')
     parser.add_argument('-f', '--fits', type=bool, required=False,
-                        default=False, dest='f')
+                        default=False, dest='f', help='run fits or only prediction')
     parser.add_argument('-m', '--mode', type=str, required=False,
-                        default='valid', dest='m')
+                        default='valid', dest='m', help='train, valid or test mode')
     parser.add_argument('-d', '--draw', type=bool, required=False,
-                        default=False, dest='m')
+                        default=False, dest='m', help='draw residuals')
     args = parser.parse_args()
     sag = SAGMill.SAGData.SAGMillData()
     if args.f:

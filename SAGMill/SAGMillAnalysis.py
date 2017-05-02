@@ -686,7 +686,7 @@ def runallsagpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
     return results
 
 
-def fitlstm(sag, target='PowerDrawMW', offset=3, neurons=8, epochs=100,
+def fitlstm(sag, target='PowerDrawMW', offset=3, neurons=4, epochs=100,
             batch_size=200, savemodel=True):
     """
     Run LSTM fit on SAG training data
