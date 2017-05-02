@@ -22,16 +22,8 @@ Installation
 	pip install -r requirements.txt
 
 
-Example
--------
+Run LSTM fit and prediction
+---------------------------
 
- import SAGMill.SAGMillAnalysis
- import pandas as pd
- pd.set_option('display.width',1000)
- sag = SAGMill.SAGMillAnalysis.SAGMillAnalyzer()
- # compute 3 minute prediction model on target variable 'PowerDrawMW' using a grid search CV on a keras neural network
- pipeline = sag.nngrideval(offset=i, target='PowerDrawMW', logfile='mylog.log')
- # compute 1 to 10 minute-wise predictions on validation data using saved model in pipeline
- yhat = sag.singlevarnnpred(pipelinelist=[pipeline], target='PowerDrawMW', mode='valid')
- # draw residuals and save them in directory 'nnet'
- sag.drawsingleresiduals(yhat, offset=3, mode='valid', target='PowerDrawMW', modeldir='nnet', mode='valid')
+       python runlstm.py -t SCATSConvBelt -m train -s True -f
+
