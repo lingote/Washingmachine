@@ -9,7 +9,8 @@ Tested with python 2.7
 Python package SAGMill
 -------------------------
 
-- SAGMillAnalysis: main module, load data and split into training, validation and test sets
+- SAGData.py: Prepare data, split train, valid and test data
+- SAGMillAnalysis.py: run analysis
 
 
 Installation
