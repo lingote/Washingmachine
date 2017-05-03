@@ -18,6 +18,14 @@ LSTM results
 -------------------------
 
 - lstm/: directory with results of LSTM prediction
+- lstm/fitresults/: directory with pkl and h5 files from fit results
+
+
+Linea regression results
+-------------------------
+
+- linreg/: results of linear regression
+
 
 Installation
 ------------
@@ -34,8 +42,13 @@ Run LSTM fit and prediction
        python runlstm.py -t SCATSConvBelt -m train -s True -f
 
 
-Draw residuals using csv with yhat 
+Draw LSTM residuals using csv with yhat 
 ----------------------------------
 
        python drawlstmresiduals.py -t Torque -m valid -f lstmForecast_PowerDrawMW_4neurons_100ep_200batch_valid.csv
 
+
+Run linear regression and plot residuals
+----------------------------------------
+
+       python runlinreg.py

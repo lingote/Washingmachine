@@ -190,10 +190,13 @@ def drawsingleresiduals(sag, yhats, offset=1, mode='valid',
     plt.annotate('{} sample'.format(mode), xy=(0.8, 0.9), xycoords='axes fraction')
     #plt.clf()
     #plt.imshow(heatmap, zorder=1)#, extent = extent)#, origin='lower')
-    figfile = ('{}/residual{}{}min_{}neurons_'
-               '{}ep_{}batch_{}.png').format(modeldir, target, offset, 
-                                            yhats.neurons, yhats.epochs, 
-                                            yhats.batch, mode)
+    if modeldir=='linreg':
+        figfile = '{}/residual{}{}min_linreg.png'.format(modeldir, target, offset)
+    else:
+        figfile = ('{}/residual{}{}min_{}neurons_'
+                   '{}ep_{}batch_{}.png').format(modeldir, target, offset, 
+                                                yhats.neurons, yhats.epochs, 
+                                                yhats.batch, mode)
     plt.savefig(figfile)
     plt.close()
 
@@ -220,7 +223,7 @@ def drawallresiduals(sag, yhats, mode='valid', modeldir='linreg'):
     :param modeldir: save graphs in this sub-directory
     """
     for i in sag.perfvars:
-        sag.drawresiduals(yhats[i], target=i, mode=mode, modeldir=modeldir)
+        drawresiduals(sag, yhats[i], target=i, mode=mode, modeldir=modeldir)
 
 
 def normalize(sag, inverse=False):
@@ -605,8 +608,8 @@ def sagpredict(sag, pipeline, mode='valid'):
     X = sag[mode].ix[:-offset, :]
     #X = X.drop(sag.controlvars, axis=1)
     #X = X.drop(sag.perfvars, axis=1)
-    #X = X.drop(targetvar, axis=1)
-    X = X[[targetvar]]
+    X = X.drop(targetvar, axis=1)
+    #X = X[[targetvar]]
     #X = X[[target]+sag.feedvars+sag.controlvars]
     #X = X[sag.perfvars]
     yhat = pd.DataFrame(pipeline.predict(np.array(X)),
@@ -668,7 +671,7 @@ def runallsagpredict(sag, mode='valid', pipelinelist=None, model='linreg'):
         for j in sag.perfvars:
             for i in xrange(1, 11):
                 if model == 'linreg':
-                    pipeline = sag.linregforecast(targetvar=j, stepsahead=i)
+                    pipeline = linregforecast(sag, targetvar=j, stepsahead=i)
                 else:
                     pipeline = sag.nngrideval(target=j, offset=i,
                                               savemodel=False, logfile=None)

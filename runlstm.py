@@ -17,7 +17,6 @@ fitdict = {'PressA': 'pressa_fits.txt', 'PressB': 'pressb_fits.txt',
 def main():
     """
     main function calls writer function
-    :param argv: args list
     :return:
     """
     perfvars = ['PressA', 'PressB', 'PressC', 'PressD',
